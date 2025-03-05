@@ -4,16 +4,15 @@
 #define LED_PIN 2           // GPIO2: Beispiel LED-Pin
 
 volatile unsigned long RPM_Count; // Zähler für Interrupts
-unsigned long RPM;                // Variable für die berechnete Drehzahl
+float RPM;                // Variable für die berechnete Drehzahl
 unsigned long lastTime;           // Variable für die letzte Zeitmessung
 volatile unsigned long lastInterruptTime = 0;  // Zeit des letzten Interrupts
 
-const int numReadings = 10;         // Anzahl der Messwerte für den gleitenden Durchschnitt
-unsigned long readings[numReadings];  // Array für die Messwerte
-int readIndex = 0;                  // Index des aktuellen Messwerts
-unsigned long total = 0;                  // Summe der Messwerte
-unsigned long averageRPM = 0;             // Durchschnittliche Drehzahl
-unsigned long averageRPM2 = 0;             // Durchschnittliche Drehzahl
+unsigned long lastOutputTime = 0; // Zeitpunkt der letzten Ausgabe
+unsigned long lastSecondRPMCount = 0;
+unsigned long RPM_Count_LastSecond = 0;
+
+const int measurementTime = 1; // Messzeit in Sekunden
 
 void IRAM_ATTR rpm_isr() {
   unsigned long interruptTime = millis();
@@ -34,48 +33,28 @@ void setup() {
 
   RPM_Count = 0;          // Initialisiere den Zähler
   lastTime = millis();    // Initialisiere die letzte Zeitmessung
+  lastSecondRPMCount = millis(); // Initialisiere lastSecondRPMCount
+  RPM_Count_LastSecond = 0; // Initialisiere RPM_Count_LastSecond
+  lastOutputTime = millis();
 
   attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), rpm_isr, FALLING); // Interrupt bei fallender Flanke
-
-  // Initialisiere das Array mit 0
-  for (int i = 0; i < numReadings; i++) {
-    readings[i] = 0;
-  }
 }
 
 void loop() {
   unsigned long currentTime = millis();
-  unsigned long timeInterval = currentTime - lastTime;
 
-  if (timeInterval >= 333) { // Berechne die Drehzahl jede 1/3 Sekunde
-    RPM = (RPM_Count * 60000) / timeInterval / 3; // Berechne die Drehzahl in U/min
+  // Gib die Ergebnisse nur alle 'measurementTime' Sekunden aus
+  if (currentTime - lastOutputTime >= measurementTime * 1000) {
+    // Berechne die Anzahl der Impulse in der Messzeit
+    unsigned long impulseCount = RPM_Count - RPM_Count_LastSecond;
 
-    // Subtrahiere den ältesten Messwert
-    total = total - readings[readIndex];
-    // Lese den neuen Messwert
-    readings[readIndex] = RPM;
-    // Addiere den neuen Messwert
-    total = total + readings[readIndex];
-    // Erhöhe den Index
-    readIndex = (readIndex + 1) % numReadings;
-    // Berechne den Durchschnitt
-    averageRPM = total / numReadings;
-    averageRPM2 = (0.7 * averageRPM) + (0.3 * RPM); // 70% des alten Durchschnitts + 30% des neuen Werts
+    // Berechne die RPM basierend auf der Anzahl der Impulse pro Sekunde
+    RPM = ((float)impulseCount * 60) / measurementTime / 3;
 
-    RPM_Count = 0;      // Setze den Zähler zurück
-    lastTime = currentTime; // Aktualisiere die letzte Zeitmessung
+    Serial.print(">RPM1sImp:");
+    Serial.println(RPM);
 
-    // Wenn die RPM niedrig ist oder seit dem letzten Interrupt eine lange Zeit vergangen ist, setze den Zähler zurück
-    if (averageRPM < 100 || (currentTime - lastInterruptTime > 333)) {
-      RPM_Count = 0;
-      total = 0;
-      for (int i = 0; i < numReadings; i++) {
-        readings[i] = 0;
-      }
-    }
-    // Serial.print(">RPM:");
-    // Serial.println(averageRPM);
-    Serial.print( ">RPM2:");
-    Serial.println(averageRPM2);
-  } 
+    lastOutputTime = currentTime;
+    RPM_Count_LastSecond = RPM_Count;
+  }
 }
