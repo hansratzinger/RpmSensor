@@ -16,10 +16,6 @@
 #define IR_SENSOR_PIN 15    // GPIO15: Infrarotsensor Pin
 #define LED_PIN 2           // GPIO2: Kontroll-LED Pin
 #define IT_T            20 // RPM (Iterations genannt in FDRS)
-#define LATITUDE_T      21 // GPS Latitude
-#define LONGITUDE_T     22 // GPS Longitude
-#define ALTITUDE_T      23 // GPS Altitude
-#define HDOP_T          24 // GPS HDOP
 
 volatile unsigned long Rpm_Count; // Zähler für Interrupts
 float Rpm;                // Variable für die berechnete Drehzahl
