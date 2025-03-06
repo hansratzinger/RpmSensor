@@ -1,23 +1,41 @@
+// RpmSensor.cpp
+// measures RPM using an IR sensor 
+// and outputs the RPM value every second
+// based on FDRS library
+// FDRS Node sends the RPM value to the FDRS gateway
+// FARM DATA RELAY SYSTEM
+// Developed by Timm Bogner (timmbogner@gmail.com) in Urbana, Illinois, USA.
+//
+// HR 2025-02-06  1.0.0  Initial version
+
+
 #include <Arduino.h>
+#include "fdrs_node_config.h"
+#include <fdrs_node.h>
 
 #define IR_SENSOR_PIN 15    // GPIO15: Infrarotsensor Pin
-#define LED_PIN 2           // GPIO2: Beispiel LED-Pin
+#define LED_PIN 2           // GPIO2: Kontroll-LED Pin
+#define IT_T            20 // RPM (Iterations genannt in FDRS)
+#define LATITUDE_T      21 // GPS Latitude
+#define LONGITUDE_T     22 // GPS Longitude
+#define ALTITUDE_T      23 // GPS Altitude
+#define HDOP_T          24 // GPS HDOP
 
-volatile unsigned long RPM_Count; // Zähler für Interrupts
-float RPM;                // Variable für die berechnete Drehzahl
+volatile unsigned long Rpm_Count; // Zähler für Interrupts
+float Rpm;                // Variable für die berechnete Drehzahl
 unsigned long lastTime;           // Variable für die letzte Zeitmessung
 volatile unsigned long lastInterruptTime = 0;  // Zeit des letzten Interrupts
 
 unsigned long lastOutputTime = 0; // Zeitpunkt der letzten Ausgabe
-unsigned long lastSecondRPMCount = 0;
-unsigned long RPM_Count_LastSecond = 0;
+unsigned long lastSecondRpmCount = 0;
+unsigned long Rpm_Count_LastSecond = 0;
 
 const int measurementTime = 1; // Messzeit in Sekunden
 
-void IRAM_ATTR rpm_isr() {
+void IRAM_ATTR Rpm_isr() {
   unsigned long interruptTime = millis();
   if (interruptTime - lastInterruptTime > 1) { // Entprellzeit von 1ms
-    RPM_Count++;
+    Rpm_Count++;
     lastInterruptTime = interruptTime;
     digitalWrite(LED_PIN, HIGH); // LED einschalten
     delay(1);                     // Kurze Verzögerung, um das Aufleuchten sichtbar zu machen
@@ -25,19 +43,33 @@ void IRAM_ATTR rpm_isr() {
   }
 }
 
+void RpmSensorFDRS(float data1) {   // Sendet die RPM-Werte an den FDRS-Gateway 
+  loadFDRS(data1, IT_T);
+  // DBG(sendFDRS()); // Debugging 
+  if (sendFDRS()) {
+    DBG("Big Success!");
+  } else {
+    DBG("Nope, not so much.");
+  }
+}
+
+
 void setup() {
   Serial.begin(115200);
   pinMode(IR_SENSOR_PIN, INPUT_PULLUP); // Setze den IR-Sensor-Pin als Eingang mit Pull-Up Widerstand
   pinMode(LED_PIN, OUTPUT);          // Setze den LED-Pin als Ausgang
-  Serial.println("RPM Sensor gestartet");
 
-  RPM_Count = 0;          // Initialisiere den Zähler
+  beginFDRS(); // Initialisiere FDRS
+
+  Serial.println("Rpm Sensor gestartet");
+
+  Rpm_Count = 0;          // Initialisiere den Zähler
   lastTime = millis();    // Initialisiere die letzte Zeitmessung
-  lastSecondRPMCount = millis(); // Initialisiere lastSecondRPMCount
-  RPM_Count_LastSecond = 0; // Initialisiere RPM_Count_LastSecond
+  lastSecondRpmCount = millis(); // Initialisiere lastSecondRpmCount
+  Rpm_Count_LastSecond = 0; // Initialisiere Rpm_Count_LastSecond
   lastOutputTime = millis();
 
-  attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), rpm_isr, FALLING); // Interrupt bei fallender Flanke
+  attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), Rpm_isr, FALLING); // Interrupt bei fallender Flanke
 }
 
 void loop() {
@@ -46,15 +78,17 @@ void loop() {
   // Gib die Ergebnisse nur alle 'measurementTime' Sekunden aus
   if (currentTime - lastOutputTime >= measurementTime * 1000) {
     // Berechne die Anzahl der Impulse in der Messzeit
-    unsigned long impulseCount = RPM_Count - RPM_Count_LastSecond;
+    unsigned long impulseCount = Rpm_Count - Rpm_Count_LastSecond;
 
     // Berechne die RPM basierend auf der Anzahl der Impulse pro Sekunde
-    RPM = ((float)impulseCount * 60) / measurementTime / 3;
+    Rpm = ((float)impulseCount * 60) / measurementTime / 3;
 
-    Serial.print(">RPM1sImp:");
-    Serial.println(RPM);
+    Serial.print(">RPM:"); // Formatierung für die Ausgabe auf Teleplot (optional)
+    Serial.println(Rpm);
+
+    RpmSensorFDRS(Rpm); // Sendet die RPM-Werte an den FDRS-Gateway
 
     lastOutputTime = currentTime;
-    RPM_Count_LastSecond = RPM_Count;
+    Rpm_Count_LastSecond = Rpm_Count;
   }
 }
