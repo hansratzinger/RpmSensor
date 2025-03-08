@@ -7,15 +7,18 @@
 // Developed by Timm Bogner (timmbogner@gmail.com) in Urbana, Illinois, USA.
 //
 // HR 2025-02-06  1.0.0  Initial version
+// HR 2025-02-08  1.1.0  Paket ID for RPM added
 
 
 #include <Arduino.h>
 #include "fdrs_node_config.h"
 #include <fdrs_node.h>
 
-#define IR_SENSOR_PIN 15    // GPIO15: Infrarotsensor Pin
-#define LED_PIN 2           // GPIO2: Kontroll-LED Pin
-#define IT_T            20 // RPM (Iterations genannt in FDRS)
+#define IR_SENSOR_PIN    15 // GPIO15: Infrarotsensor Pin
+#define LED_PIN           2 // GPIO2: Kontroll-LED Pin
+#define RPM              20 // RPM (Iterations genannt in FDRS)
+#define RPM_PAKETSEND_ID 16 // RPM (Iterations genannt in FDRS)
+
 
 volatile unsigned long Rpm_Count; // Zähler für Interrupts
 float Rpm;                // Variable für die berechnete Drehzahl
@@ -25,7 +28,7 @@ volatile unsigned long lastInterruptTime = 0;  // Zeit des letzten Interrupts
 unsigned long lastOutputTime = 0; // Zeitpunkt der letzten Ausgabe
 unsigned long lastSecondRpmCount = 0;
 unsigned long Rpm_Count_LastSecond = 0;
-
+float rpmPacketSend_ID = 0;
 const int measurementTime = 1; // Messzeit in Sekunden
 
 void IRAM_ATTR Rpm_isr() {
@@ -39,8 +42,9 @@ void IRAM_ATTR Rpm_isr() {
   }
 }
 
-void RpmSensorFDRS(float data1) {   // Sendet die RPM-Werte an den FDRS-Gateway 
-  loadFDRS(data1, IT_T);
+void sendFDRS(float data1, float data2) {   // Sendet die RPM-Werte an den FDRS-Gateway 
+  loadFDRS(data1, RPM);
+  loadFDRS(data2, RPM_PAKETSEND_ID);
   // DBG(sendFDRS()); // Debugging 
   if (sendFDRS()) {
     DBG("Big Success!");
@@ -81,10 +85,11 @@ void loop() {
 
     Serial.print(">RPM:"); // Formatierung für die Ausgabe auf Teleplot (optional)
     Serial.println(Rpm);
-
-    RpmSensorFDRS(Rpm); // Sendet die RPM-Werte an den FDRS-Gateway
+    rpmPacketSend_ID = rpmPacketSend_ID + 1;
+    sendFDRS(Rpm, rpmPacketSend_ID); // Sendet die RPM-Werte an den FDRS-Gateway
 
     lastOutputTime = currentTime;
     Rpm_Count_LastSecond = Rpm_Count;
+    rpmPacketSend_ID = (rpmPacketSend_ID > 115200) ? 0 : rpmPacketSend_ID; // prevens overflow
   }
 }
