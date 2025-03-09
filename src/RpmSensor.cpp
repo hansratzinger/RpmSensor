@@ -7,7 +7,7 @@
 // Developed by Timm Bogner (timmbogner@gmail.com) in Urbana, Illinois, USA.
 //
 // HR 2025-02-06  1.0.0  Initial version
-// HR 2025-02-08  1.1.0  Paket ID for RPM added
+// HR 2025-02-08  1.1.1  Paket ID for RPM added
 
 // Status LED 
 #define GREEN_LED  25    // Grüne LED an GPIO25 (output-fähig)
