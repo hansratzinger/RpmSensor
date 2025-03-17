@@ -21,7 +21,7 @@
 #define IR_SENSOR_PIN    15 // GPIO15: Infrarotsensor Pin
 #define LED_PIN           2 // GPIO2: Kontroll-LED Pin
 #define RPM              20 // RPM (Iterations genannt in FDRS)
-#define RPM_PAKETSEND_ID 16 // RPM (Iterations genannt in FDRS)
+#define BOARD_TIME       16 // Board Time (Time in Milliseconds relative to the start of the board)
 
 #define TRIGGERS_PER_REV 1 // Anzahl der Impulse pro Umdrehung
 
@@ -37,7 +37,7 @@ volatile unsigned long lastInterruptTime = 0;  // Zeit des letzten Interrupts
 unsigned long lastOutputTime = 0; // Zeitpunkt der letzten Ausgabe
 unsigned long lastSecondRpmCount = 0;
 unsigned long Rpm_Count_LastSecond = 0;
-float rpmPacketSend_ID = 0;
+float boardTime = 0;
 const int measurementTime = 1; // Messzeit in Sekunden
 
 void IRAM_ATTR Rpm_isr() {
@@ -59,7 +59,7 @@ void setLed(bool state, uint8_t pin) {
 
 void sendFDRS(float data1, float data2) {   // Sendet die RPM-Werte an den FDRS-Gateway 
   loadFDRS(data1, RPM);
-  loadFDRS(data2, RPM_PAKETSEND_ID);
+  loadFDRS(data2, BOARD_TIME);
   // DBG(sendFDRS()); // Debugging 
   if (sendFDRS()) {
     DBG("Big Success!");
@@ -103,11 +103,11 @@ void loop() {
 
     Serial.print(">RPM:"); // Formatierung für die Ausgabe auf Teleplot (optional)
     Serial.println(Rpm);
-    rpmPacketSend_ID = rpmPacketSend_ID + 1;
-    sendFDRS(Rpm, rpmPacketSend_ID); // Sendet die RPM-Werte an den FDRS-Gateway
+    boardTime = (float)currentTime / 1000;
+    sendFDRS(Rpm, boardTime); // Sendet die RPM-Werte an den FDRS-Gateway
 
     lastOutputTime = currentTime;
     Rpm_Count_LastSecond = Rpm_Count;
-    rpmPacketSend_ID = (rpmPacketSend_ID > 115200) ? 0 : rpmPacketSend_ID; // prevens overflow
+    
   }
 }
