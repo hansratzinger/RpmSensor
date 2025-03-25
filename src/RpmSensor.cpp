@@ -8,10 +8,12 @@
 //
 // HR 2025-02-06  1.0.0  Initial version
 // HR 2025-02-08  1.1.1  Paket ID for RPM added
+// HR 2025-02-25  1.1.2  Internal LED instead of RED_LED
+// ---------------------------------------------------------
 
 // Status LED 
-#define GREEN_LED  25    // Grüne LED an GPIO25 (output-fähig)
-#define RED_LED    26    // Rote LED an GPIO26 (output-fähig)
+// #define GREEN_LED  25    // Grüne LED an GPIO25 (output-fähig)
+// #define RED_LED    26    // Rote LED an GPIO26 (output-fähig)
 
 
 #include <Arduino.h>
@@ -24,10 +26,6 @@
 #define BOARD_TIME       16 // Board Time (Time in Milliseconds relative to the start of the board)
 
 #define TRIGGERS_PER_REV 1 // Anzahl der Impulse pro Umdrehung
-
-// Status LED 
-#define GREEN_LED  25    // Grüne LED an GPIO25 (output-fähig)
-#define RED_LED    26    // Rote LED an GPIO26 (output-fähig)
 
 volatile unsigned long Rpm_Count; // Zähler für Interrupts
 float Rpm;                // Variable für die berechnete Drehzahl
@@ -45,9 +43,9 @@ void IRAM_ATTR Rpm_isr() {
   if (interruptTime - lastInterruptTime > 1) { // Entprellzeit von 1ms
     Rpm_Count++;
     lastInterruptTime = interruptTime;
-    digitalWrite(GREEN_LED, HIGH); // LED einschalten
+    digitalWrite(LED_PIN, HIGH); // LED einschalten
     delay(1);                     // Kurze Verzögerung, um das Aufleuchten sichtbar zu machen
-    digitalWrite(GREEN_LED, LOW);  // LED ausschalten
+    digitalWrite(LED_PIN, LOW);  // LED ausschalten
   }
 }
 
@@ -63,15 +61,15 @@ void sendFDRS(float data1, float data2) {   // Sendet die RPM-Werte an den FDRS-
   // DBG(sendFDRS()); // Debugging 
   if (sendFDRS()) {
     DBG("Big Success!");
-    setLed(false, RED_LED);
+    setLed(false, LED_PIN);
   } else {
     DBG("Nope, not so much.");
-    setLed(true, RED_LED);
+    setLed(true, LED_PIN);
   }
 }
 
 void setup() {
-  setLed(true, RED_LED);
+  setLed(true, LED_PIN);
   Serial.begin(115200);
   pinMode(IR_SENSOR_PIN, INPUT_PULLUP); // Setze den IR-Sensor-Pin als Eingang mit Pull-Up Widerstand
   pinMode(LED_PIN, OUTPUT);          
@@ -87,7 +85,7 @@ void setup() {
   lastOutputTime = millis();
 
   attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), Rpm_isr, FALLING); // Interrupt bei fallender Flanke
-  setLed(false, RED_LED);
+  setLed(false, LED_PIN);
 }
 
 void loop() {
