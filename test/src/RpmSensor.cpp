@@ -1,14 +1,12 @@
 // RpmSensor.cpp
 // measures RPM using an IR sensor 
 // and outputs the RPM value every second
-// based on FDRS library
-// FDRS Node sends the RPM value to the FDRS gateway
-// uses libray of FARM DATA RELAY SYSTEM
-// Developed by Timm Bogner (timmbogner@gmail.com) in Urbana, Illinois, USA.
+// to .csv file on the SD card
 //
 // HR 2025-02-06  1.0.0  Initial version
 // HR 2025-02-08  1.1.1  Paket ID for RPM added
 // HR 2025-02-25  1.1.2  Internal LED instead of RED_LED
+// HR 2025-03-01  2.0.0  Removal FDRS, now storage on SD card, adding RTC clock
 // ---------------------------------------------------------
 
 // Status LED 
@@ -17,13 +15,9 @@
 
 
 #include <Arduino.h>
-#include "fdrs_node_config.h"
-#include <fdrs_node.h>
 
 #define IR_SENSOR_PIN    15 // GPIO15: Infrarotsensor Pin
 #define LED_PIN           2 // GPIO2: Kontroll-LED Pin
-#define RPM              20 // RPM (Iterations genannt in FDRS)
-#define BOARD_TIME       16 // Board Time (Time in Milliseconds relative to the start of the board)
 
 #define TRIGGERS_PER_REV 1 // Anzahl der Impulse pro Umdrehung
 
@@ -55,26 +49,12 @@ void setLed(bool state, uint8_t pin) {
   digitalWrite(pin, state);
 }
 
-void sendFDRS(float data1, float data2) {   // Sendet die RPM-Werte an den FDRS-Gateway 
-  loadFDRS(data1, RPM);
-  loadFDRS(data2, BOARD_TIME);
-  // DBG(sendFDRS()); // Debugging 
-  if (sendFDRS()) {
-    DBG("Big Success!");
-    setLed(false, LED_PIN);
-  } else {
-    DBG("Nope, not so much.");
-    setLed(true, LED_PIN);
-  }
-}
 
 void setup() {
   setLed(true, LED_PIN);
   Serial.begin(115200);
   pinMode(IR_SENSOR_PIN, INPUT_PULLUP); // Setze den IR-Sensor-Pin als Eingang mit Pull-Up Widerstand
   pinMode(LED_PIN, OUTPUT);          
-
-  beginFDRS(); // Initialisiere FDRS
 
   Serial.println("Rpm Sensor gestartet");
 
@@ -99,10 +79,9 @@ void loop() {
     // Berechne die RPM basierend auf der Anzahl der Impulse pro Sekunde
     Rpm = ((float)impulseCount * 60) / measurementTime / TRIGGERS_PER_REV;
 
-    Serial.print(">RPM:"); // Formatierung für die Ausgabe auf Teleplot (optional)
+    Serial.print(">RPM:"); 
     Serial.println(Rpm);
     boardTime = (float)currentTime / 1000;
-    sendFDRS(Rpm, boardTime); // Sendet die RPM-Werte an den FDRS-Gateway
 
     lastOutputTime = currentTime;
     Rpm_Count_LastSecond = Rpm_Count;
