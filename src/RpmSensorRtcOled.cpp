@@ -7,21 +7,24 @@
 
 // OLED display library
 #include <Arduino.h>
+#include <TFT_eSPI.h>
+#include <FS.h>
+#include <SD.h>
+#include <SPI.h>
+
+#define TRIGGERS_PER_REV 1 // Anzahl der Impulse pro Umdrehung
 
 #define IR_SENSOR_PIN    15 // GPIO15: Infrarotsensor Pin
 #define LED_PIN           2 // GPIO2: Kontroll-LED Pin
-#define TRIGGERS_PER_REV 1 // Anzahl der Impulse pro Umdrehung
+#define TFT_MOSI 23 // GPIO Standard-MOSI-Pin
+#define MISO 19 // GPIO Standard-MOSI-Pin
+#define TFT_SCLK 18 // GPIO Standard-SCLK-Pin
+#define TFT_CS 5    // GPIO Chip Select für das Display
+#define TFT_DC 2    // GPIO Data/Command (A0)
+#define TFT_RST 4   // GPIO Reset
+#define SD_CS 13    // GPIO Chip Select für die SD-Karte
 
-#include <Adafruit_GFX.h> // Core graphics library
-#include <Adafruit_ST7735.h> // Hardware-specific library for ST7735
-#include <SPI.h>
-#define TFT_CS 5    // Chip Select
-#define TFT_RST 4   // Reset
-#define TFT_DC 2   // Data/Command (A0)
-#define TFT_MOSI 23 // SDA (MOSI)
-#define TFT_SCLK 18 // SCK
-
-Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
+TFT_eSPI tft = TFT_eSPI();
 
 // based on the RTClib: implementation of an alarm using DS3231 https://github.com/adafruit/RTClib
 // DS3231 RTC library
@@ -58,6 +61,27 @@ void setLed(bool state, uint8_t pin) {
   digitalWrite(pin, state);
 }
 
+void selectDisplay() {
+    digitalWrite(SD_CS, HIGH);  // SD-Karte deaktivieren
+    digitalWrite(TFT_CS, LOW);  // Display aktivieren
+}
+
+void selectSDCard() {
+    digitalWrite(TFT_CS, HIGH); // Display deaktivieren
+    digitalWrite(SD_CS, LOW);   // SD-Karte aktivieren
+}
+
+void testOLED() {
+  TFT_eSPI tft = TFT_eSPI();  
+  tft.init();
+  tft.setRotation(1);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(10, 10);
+  tft.print("Display OK");  
+}
+
 String currentTime(){
   // Get the current time from the RTC
   String currentTime ="";
@@ -81,19 +105,19 @@ String currentDate(){
   return currentDate;
 }
 
-void printRpm(int rpm) {
-    tft.fillScreen(ST77XX_BLACK);  // clear screen
+void displayRpm(int rpm) {
+    tft.fillScreen(TFT_BLACK);  // clear screen
     tft.setCursor(10, 20);
-    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextColor(TFT_WHITE);
     tft.setTextSize(5);
     tft.setTextWrap(true);
     tft.print(rpm);
 }
 
-void printTimestamp() {
+void displayTimestamp() {
     // tft.fillScreen(ST77XX_BLACK); // clear screen
     tft.setCursor(10, 75);
-    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextColor(TFT_WHITE);
     tft.setTextSize(3);
     // tft.setTextWrap(true);
     tft.print(currentTime());
@@ -102,7 +126,7 @@ void printTimestamp() {
     tft.print(currentDate());
 }
 
-void printDebug() {
+void monitorDebug() {
     Serial.print(currentTime());
     Serial.print(" ");  
     Serial.print(currentDate());
@@ -131,11 +155,48 @@ void setup() {
     rtc.writeSqwPinMode(DS3231_OFF);
     rtc.disableAlarm(2);
 
-    // OLED display initialization
-    Serial.print(F("init 1.8 tft screen"));
-    tft.initR(INITR_BLACKTAB); // Init ST7735S chip, black tab
-    tft.setRotation(1);       // Set display to landscape (Querformat)
-    Serial.println(F("Initialized"));
+    // // OLED display initialization
+    // Serial.print(F("init 1.8 tft screen"));
+    // tft.initR(INITR_BLACKTAB); // Init ST7735S chip, black tab
+    // tft.setRotation(1);       // Set display to landscape (Querformat)
+    // Serial.println(F("Initialized"));
+    // if (TEST) testOLED();
+
+
+    // SPI wird in der library initialisiert
+
+    // CS-Pins als Ausgang setzen
+    pinMode(TFT_CS, OUTPUT);
+    pinMode(SD_CS, OUTPUT);
+
+    // Beide Geräte deaktivieren
+    digitalWrite(TFT_CS, HIGH);
+    digitalWrite(SD_CS, HIGH);
+
+    // Display initialisieren
+    Serial.println("Versuche, Display zu initialisieren...");
+    selectDisplay();
+    tft.init();
+    tft.setRotation(1);
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE);
+    tft.setTextSize(2);
+    tft.setCursor(10, 10);
+    tft.print("Display OK");
+    digitalWrite(TFT_CS, HIGH); // Display deaktivieren
+
+    // SD-Karte initialisieren
+    Serial.println("Versuche, SD-Karte zu initialisieren...");
+    selectSDCard();
+    if (!SD.begin(SD_CS)) {
+      Serial.println("Versuche, Display zu initialisieren...");
+      Serial.println("SD-Karte konnte nicht initialisiert werden!");
+      while (1);
+    }
+    Serial.println("SD-Karte erfolgreich initialisiert.");
+    digitalWrite(SD_CS, HIGH); // SD-Karte deaktivieren
+
+
 
     //RPM sensor initialization
     setLed(true, LED_PIN);    
@@ -155,21 +216,25 @@ void setup() {
 }
 
 void loop() {
-  unsigned long currentTime = millis();
-  // Gib die Ergebnisse nur alle 'measurementTime' Sekunden aus
-  if (currentTime - lastOutputTime >= measurementTime * 1000) {
-    // Berechne die Anzahl der Impulse in der Messzeit
-    unsigned long impulseCount = Rpm_Count - Rpm_Count_LastSecond;
+    unsigned long currentTime = millis();
+    if (currentTime - lastOutputTime >= measurementTime * 1000) {
+        unsigned long impulseCount = Rpm_Count - Rpm_Count_LastSecond;
+        Rpm = ((int)impulseCount * 60) / measurementTime / TRIGGERS_PER_REV;
 
-    // Berechne die RPM basierend auf der Anzahl der Impulse pro Sekunde
-    Rpm = ((int)impulseCount * 60) / measurementTime / TRIGGERS_PER_REV;
+        lastOutputTime = currentTime;
+        Rpm_Count_LastSecond = Rpm_Count;
 
-    lastOutputTime = currentTime;
-    Rpm_Count_LastSecond = Rpm_Count;
-    
-    // print current date and time
-    if (TEST) printDebug();
-    printRpm(Rpm); // print the RPM value on the display
-    printTimestamp();   // print the current date and time on the display
-  }
+        if (TEST) monitorDebug();
+
+        // Display aktivieren und Daten anzeigen
+        selectDisplay();
+        displayRpm(Rpm);
+        displayTimestamp();
+        digitalWrite(TFT_CS, HIGH); // Display deaktivieren
+
+        // SD-Karte aktivieren (falls benötigt)
+        selectSDCard();
+        // Hier kannst du Daten auf die SD-Karte schreiben
+        digitalWrite(SD_CS, HIGH); // SD-Karte deaktivieren
+    }
 }
