@@ -34,7 +34,7 @@ bool TEST = true; // set to true to enable debug output
 #define CLOCK_INTERRUPT_PIN 14
 
 volatile unsigned long Rpm_Count; // Zähler für Interrupts
-float Rpm;                        // variable to store the RPM value          
+int Rpm;                        // variable to store the RPM value          
 unsigned long lastTime;           // Variable für die letzte Zeitmessung
 volatile unsigned long lastInterruptTime = 0;  // Zeit des letzten Interrupts
 
@@ -58,16 +58,14 @@ void setLed(bool state, uint8_t pin) {
   digitalWrite(pin, state);
 }
 
-
-
 String currentTime(){
   // Get the current time from the RTC
   String currentTime ="";
-  if (rtc.now().hour() < 10) currentTime += "0"; // Add leading zero for hour
-  currentTime = String(rtc.now().hour(), DEC) + ":";
-  if (rtc.now().minute() < 10) currentTime += "0"; // Add leading zero for minute
-  currentTime += String(rtc.now().minute(), DEC) + ":"; // Add minute with leading zero
-  if (rtc.now().second() < 10) currentTime += "0"; // Add leading zero for second
+  if (rtc.now().hour() < 10) currentTime = "0"; // Add leading zero for hour 
+  currentTime += String(rtc.now().hour(), DEC) + ":"; 
+  if (rtc.now().minute() < 10) currentTime += "0"; // Add leading zero for minute  
+  currentTime += String(rtc.now().minute(), DEC) + ":"; // Add minute with leading zero  
+  if (rtc.now().second() < 10) currentTime += "0"; // Add leading zero for second 
   currentTime += String(rtc.now().second(), DEC); // Add second with leading zero
   return currentTime;
 }
@@ -84,7 +82,7 @@ String currentDate(){
 }
 
 void printRpm(int rpm) {
-    tft.fillScreen(ST77XX_BLACK);
+    tft.fillScreen(ST77XX_BLACK);  // clear screen
     tft.setCursor(10, 20);
     tft.setTextColor(ST77XX_WHITE);
     tft.setTextSize(5);
@@ -93,11 +91,11 @@ void printRpm(int rpm) {
 }
 
 void printTimestamp() {
-    // tft.fillScreen(ST77XX_BLACK);
+    // tft.fillScreen(ST77XX_BLACK); // clear screen
     tft.setCursor(10, 75);
     tft.setTextColor(ST77XX_WHITE);
     tft.setTextSize(3);
-    tft.setTextWrap(true);
+    // tft.setTextWrap(true);
     tft.print(currentTime());
     tft.setTextSize(2);
     tft.setCursor(25, 110);
@@ -105,20 +103,13 @@ void printTimestamp() {
 }
 
 void printDebug() {
-    Serial.print("Current time: ");
-    Serial.print(rtc.now().hour(), DEC);
-    Serial.print(":");
-    Serial.print(rtc.now().minute(), DEC);
-    Serial.print(":");
-    Serial.print(rtc.now().second(), DEC);
+    Serial.print(currentTime());
+    Serial.print(" ");  
+    Serial.print(currentDate());
     Serial.print(" ");
-    Serial.print("Current date: ");
-    Serial.print(rtc.now().year(), DEC);
-    Serial.print("-");
-    Serial.print(rtc.now().month(), DEC);
-    Serial.print("-");
-    Serial.println(rtc.now().day(), DEC);
-    Serial.print("RPM: "); 
+    Serial.print("Rpm_Count: ");
+    Serial.println(Rpm_Count);
+    Serial.print("Rpm: ");
     Serial.println(Rpm);
 }
 void setup() {
@@ -171,14 +162,14 @@ void loop() {
     unsigned long impulseCount = Rpm_Count - Rpm_Count_LastSecond;
 
     // Berechne die RPM basierend auf der Anzahl der Impulse pro Sekunde
-    Rpm = ((float)impulseCount * 60) / measurementTime / TRIGGERS_PER_REV;
+    Rpm = ((int)impulseCount * 60) / measurementTime / TRIGGERS_PER_REV;
 
     lastOutputTime = currentTime;
     Rpm_Count_LastSecond = Rpm_Count;
     
     // print current date and time
     if (TEST) printDebug();
-    printRpm(Rpm);
-    printTimestamp();   
+    printRpm(Rpm); // print the RPM value on the display
+    printTimestamp();   // print the current date and time on the display
   }
 }
