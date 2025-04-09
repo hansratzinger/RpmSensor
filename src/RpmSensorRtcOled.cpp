@@ -1,3 +1,7 @@
+// Project: RpmSensorRtcOled
+// HR 2025-04-10 00:45 NK
+
+
 /*********
   Rui Santos & Sara Santos - Random Nerd Tutorials
   Complete instructions at https://RandomNerdTutorials.com/esp32-ds3231-real-time-clock-arduino/
@@ -7,21 +11,17 @@
 
 // OLED display library
 #include <Arduino.h>
-#include <TFT_eSPI.h>
+#include "TFT_eSPI.h"
+#include "User_Setup.h" // TFT_eSPI library setup file
 #include <FS.h>
 #include <SD.h>
 #include <SPI.h>
+
 
 #define TRIGGERS_PER_REV 1 // Anzahl der Impulse pro Umdrehung
 
 #define IR_SENSOR_PIN    15 // GPIO15: Infrarotsensor Pin
 #define LED_PIN           2 // GPIO2: Kontroll-LED Pin
-#define TFT_MOSI 23 // GPIO Standard-MOSI-Pin
-#define MISO 19 // GPIO Standard-MOSI-Pin
-#define TFT_SCLK 18 // GPIO Standard-SCLK-Pin
-#define TFT_CS 5    // GPIO Chip Select für das Display
-#define TFT_DC 2    // GPIO Data/Command (A0)
-#define TFT_RST 4   // GPIO Reset
 #define SD_CS 13    // GPIO Chip Select für die SD-Karte
 
 TFT_eSPI tft = TFT_eSPI();
@@ -61,13 +61,41 @@ void setLed(bool state, uint8_t pin) {
   digitalWrite(pin, state);
 }
 
+void debugPinSettings() {
+    Serial.println("Pin Settings:");
+    Serial.print("TFT_CS: ");
+    Serial.println(TFT_CS);
+    Serial.print("SD_CS: ");
+    Serial.println(SD_CS);
+    Serial.print("TFT_MISO: ");
+    Serial.println(TFT_MISO);
+    Serial.print("TFT_MOSI: ");
+    Serial.println(TFT_MOSI);
+    Serial.print("TFT_SCLK: ");
+    Serial.println(TFT_SCLK);
+    Serial.print("TFT_DC: ");
+    Serial.println(TFT_DC);
+    Serial.print("TFT_RST: ");
+    Serial.println(TFT_RST);      
+    Serial.print("IR_SENSOR_PIN: ");
+    Serial.println(IR_SENSOR_PIN);
+    Serial.print("LED_PIN: ");
+    Serial.println(LED_PIN);
+}
+
 void selectDisplay() {
+    Serial.println("Display ausgewählt");
+    Serial.println("deaktivieren SD_CS: " + String(TFT_CS));
     digitalWrite(SD_CS, HIGH);  // SD-Karte deaktivieren
+    Serial.println("aktivieren TFT_CS: " + String(SD_CS));  
     digitalWrite(TFT_CS, LOW);  // Display aktivieren
 }
 
 void selectSDCard() {
+    Serial.println("SD-Karte ausgewählt");
+    Serial.println("deaktivieren TFT_CS: " + String(SD_CS));
     digitalWrite(TFT_CS, HIGH); // Display deaktivieren
+    Serial.println("aktivieren SD_CS: " + String(TFT_CS));
     digitalWrite(SD_CS, LOW);   // SD-Karte aktivieren
 }
 
@@ -136,8 +164,12 @@ void monitorDebug() {
     Serial.print("Rpm: ");
     Serial.println(Rpm);
 }
+
 void setup() {
     Serial.begin(115200);
+    Serial.println("Setup gestartet");
+    delay(5000); // Warten auf den Serial Monitor
+    debugPinSettings(); // Pin-Einstellungen debuggen
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LOW);
 
@@ -188,15 +220,12 @@ void setup() {
     // SD-Karte initialisieren
     Serial.println("Versuche, SD-Karte zu initialisieren...");
     selectSDCard();
-    if (!SD.begin(SD_CS)) {
-      Serial.println("Versuche, Display zu initialisieren...");
-      Serial.println("SD-Karte konnte nicht initialisiert werden!");
-      while (1);
+    // SD-Karten initialisieren
+    if (!SD.begin(SD_CS, tft.getSPIinstance())) {
+        Serial.println("SD-Karte konnte nicht initialisiert werden!");
+        while (1);
     }
-    Serial.println("SD-Karte erfolgreich initialisiert.");
     digitalWrite(SD_CS, HIGH); // SD-Karte deaktivieren
-
-
 
     //RPM sensor initialization
     setLed(true, LED_PIN);    
@@ -213,7 +242,9 @@ void setup() {
   
     attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), Rpm_isr, FALLING); // Interrupt bei fallender Flanke
     setLed(false, LED_PIN);
+    Serial.println("Setup abgeschlossen");
 }
+
 
 void loop() {
     unsigned long currentTime = millis();
@@ -224,17 +255,18 @@ void loop() {
         lastOutputTime = currentTime;
         Rpm_Count_LastSecond = Rpm_Count;
 
-        if (TEST) monitorDebug();
+        if (TEST) {
+          monitorDebug();
+        } 
 
         // Display aktivieren und Daten anzeigen
         selectDisplay();
         displayRpm(Rpm);
         displayTimestamp();
-        digitalWrite(TFT_CS, HIGH); // Display deaktivieren
-
+        
         // SD-Karte aktivieren (falls benötigt)
         selectSDCard();
         // Hier kannst du Daten auf die SD-Karte schreiben
-        digitalWrite(SD_CS, HIGH); // SD-Karte deaktivieren
+        
     }
 }
