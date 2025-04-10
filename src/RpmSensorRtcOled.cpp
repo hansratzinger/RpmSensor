@@ -108,6 +108,9 @@ void testOLED() {
   tft.setTextSize(2);
   tft.setCursor(10, 10);
   tft.print("Display OK");  
+  delay(3000);
+  tft.fillScreen(TFT_BLACK);
+  delay(2000);
 }
 
 String currentTime(){
@@ -165,10 +168,67 @@ void monitorDebug() {
     Serial.println(Rpm);
 }
 
+File openLogFile() {
+  String fileName = "/" + currentDate() + ".csv"; // Dateiname basierend auf dem aktuellen Datum
+  bool fileExists = SD.exists(fileName);         // Prüfen, ob die Datei bereits existiert
+  File file = SD.open(fileName, FILE_APPEND);    // Datei im Anhänge-Modus öffnen
+  if (!file) {
+      Serial.println("Fehler beim Öffnen der Datei: " + fileName);
+  } else {
+      Serial.println("Datei geöffnet: " + fileName);
+      if (!fileExists) {
+          // Schreibe Spaltenüberschriften, wenn die Datei neu erstellt wurde
+          file.println("date,time,rpm");
+          Serial.println("Spaltenüberschriften hinzugefügt.");
+      }
+  }
+  return file;
+}
+
+void logData(File file, int rpm) {
+  if (file) {
+      String logEntry = currentDate() + "," + currentTime() + "," + String(rpm);
+      file.println(logEntry); // Daten in die Datei schreiben
+      Serial.print("Daten geschrieben: ");
+      Serial.println(logEntry);
+  } else {
+      Serial.println("Datei ist nicht geöffnet!");
+  }
+}
+
+void closeLogFile(File file) {
+  if (file) {
+      file.close();
+      Serial.println("Datei geschlossen.");
+  }
+}
+
+void displaySDCardWarning() {
+  tft.fillScreen(TFT_RED);  
+  tft.setTextColor(TFT_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(10, 20);
+  tft.print("No SD-card!");
+  delay(2500);
+  tft.setCursor(10, 60);
+  tft.print("Restarting");
+  tft.setCursor(10, 80);
+  tft.print("in 5 sec...");
+  delay(5000);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(10, 40);
+  tft.print("Restarting");
+  delay(1000);
+  tft.fillScreen(TFT_BLACK);
+}
+
+
 void setup() {
     Serial.begin(115200);
     Serial.println("Setup gestartet");
-    delay(5000); // Warten auf den Serial Monitor
+    delay(2000); // Warten auf den Serial Monitor
     debugPinSettings(); // Pin-Einstellungen debuggen
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LOW);
@@ -187,16 +247,7 @@ void setup() {
     rtc.writeSqwPinMode(DS3231_OFF);
     rtc.disableAlarm(2);
 
-    // // OLED display initialization
-    // Serial.print(F("init 1.8 tft screen"));
-    // tft.initR(INITR_BLACKTAB); // Init ST7735S chip, black tab
-    // tft.setRotation(1);       // Set display to landscape (Querformat)
-    // Serial.println(F("Initialized"));
-    // if (TEST) testOLED();
-
-
     // SPI wird in der library initialisiert
-
     // CS-Pins als Ausgang setzen
     pinMode(TFT_CS, OUTPUT);
     pinMode(SD_CS, OUTPUT);
@@ -216,15 +267,19 @@ void setup() {
     tft.setCursor(10, 10);
     tft.print("Display OK");
     digitalWrite(TFT_CS, HIGH); // Display deaktivieren
-
+    delay(3000); // Warten auf den Serial Monitor
     // SD-Karte initialisieren
     Serial.println("Versuche, SD-Karte zu initialisieren...");
     selectSDCard();
     // SD-Karten initialisieren
-    if (!SD.begin(SD_CS, tft.getSPIinstance())) {
+    while (!SD.begin(SD_CS, tft.getSPIinstance())) {
         Serial.println("SD-Karte konnte nicht initialisiert werden!");
-        while (1);
-    }
+        delay(1000); // Warten auf den Serial Monitor
+        selectDisplay();
+        displaySDCardWarning();
+        selectSDCard;
+      }
+
     digitalWrite(SD_CS, HIGH); // SD-Karte deaktivieren
 
     //RPM sensor initialization
@@ -264,9 +319,11 @@ void loop() {
         displayRpm(Rpm);
         displayTimestamp();
         
-        // SD-Karte aktivieren (falls benötigt)
+        // SD-Karte aktivieren und Daten speichern
         selectSDCard();
-        // Hier kannst du Daten auf die SD-Karte schreiben
+        File logFile = openLogFile(); // Datei öffnen oder erstellen
+        logData(logFile, Rpm);        // Daten schreiben
+        closeLogFile(logFile);       // Datei schließen
         
     }
 }
