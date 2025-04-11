@@ -58,6 +58,7 @@ void IRAM_ATTR Rpm_isr()
     lastInterruptTime = interruptTime;
   }
 }
+
 String readGPIOStatus(int pin) {
     int pinStatus = digitalRead(pin); // Status des GPIO-Pins auslesen
     if (pinStatus == HIGH) {
@@ -371,7 +372,7 @@ void displayTimestamp()
   // tft.setTextWrap(true);
   tft.print(currentTime());
   // tft.setTextSize(2);
-  tft.setCursor(40, 100);
+  tft.setCursor(110, 70);
   // tft.print(currentDate());
   tft.print("UTC");
 }
