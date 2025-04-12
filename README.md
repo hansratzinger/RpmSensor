@@ -1,5 +1,5 @@
 
- # RpmSensorRtcOled.cpp
+ # RPM-Sensor
  
  Usage for measuring RMP (Revolutions per Minute) with an infrared sensor 
  and displaying the result on an OLED display. The DS3231 RTC is used to keep track of time.
