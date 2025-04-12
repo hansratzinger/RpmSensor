@@ -1,6 +1,8 @@
 
  # RPM-Sensor
  
+### Release 1.0 / 2025-04-12
+
  Usage for measuring RMP (Revolutions per Minute) with an infrared sensor 
  and displaying the result on an OLED display. The DS3231 RTC is used to keep track of time.
 
@@ -18,4 +20,12 @@
  the Free Software Foundation, either version 3 of the License, or
  any later version.
  
- Release 1.0 / 2025-04-12
+
+-------------------------------------
+### RELEASE 1.1 HR 2025-04-12 NK
+
+Added failure procedure for SD card
+Added temperature measurement and logging
+
+
+

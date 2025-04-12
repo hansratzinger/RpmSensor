@@ -11,6 +11,10 @@
 // ESP32 DS3231 RTC + OLED Display + SD Card + Infrared Sensor
 // RELEASE 1.0 HR 2025-04-12 NK
 // -------------------------------------------------
+// RELEASE 1.1 HR 2025-04-12 NK
+// added failure procedure for SD card
+// added temperature measurement and logging
+// ----------------------------------------------------
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
@@ -40,7 +44,8 @@ TFT_eSPI tft = TFT_eSPI();
 #include <RTClib.h>
 RTC_DS3231 rtc;
 
-bool TEST = true; // set to true to enable debug output
+bool TEST = false; // set to true to enable debug output
+bool sdCardAvailable = true; // Status der SD-Karte
 
 // the pin that is connected to SQW
 #define CLOCK_INTERRUPT_PIN 14
@@ -58,6 +63,7 @@ const int measurementTime = 1; // Messzeit in Sekunden
 
 volatile bool startRTCSetup = false;          // Flag, um die Zeiteinstellung zu starten
 volatile unsigned long lastInterruptTime = 0; // Zeit des letzten Interrupts
+
 void IRAM_ATTR handleSetButtonInterrupt()
 {
   unsigned long interruptTime = millis();
@@ -126,7 +132,7 @@ void setupRTCWithButtons()
   int hour = rtc.now().hour();     // Aktuelle Stunde von der RTC
   int minute = rtc.now().minute(); // Aktuelle Minute von der RTC
   int second = rtc.now().second(); // Aktuelle Sekunde von der RTC
-
+ 
   bool stateChanged = true; // Flag, um anzuzeigen, ob sich der Zustand geändert hat
 
   // Warten, bis der BUTTON_SET losgelassen wird
@@ -295,6 +301,50 @@ void selectSDCard()
   digitalWrite(SD_CS, LOW); // SD-Karte aktivieren
 }
 
+void displaySDCardWarning()
+{
+  tft.fillScreen(TFT_RED);
+  tft.setTextColor(TFT_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(10, 20);
+  tft.print("No SD-card!");
+  delay(2500);
+  tft.setCursor(10, 60);
+  tft.print("Restarting");
+  tft.setCursor(10, 80);
+  tft.print("in 5 sec...");
+  delay(5000);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(10, 40);
+  tft.print("Restarting");
+  delay(1000);
+  tft.fillScreen(TFT_BLACK);
+}
+
+void checkSDCard()
+{
+    if (!SD.begin(SD_CS, tft.getSPIinstance()))
+    {
+        if (sdCardAvailable) // Nur reagieren, wenn die SD-Karte vorher verfügbar war
+        {
+            sdCardAvailable = false; // SD-Karte ist nicht mehr verfügbar
+            Serial.println("SD-Karte entfernt!");
+            selectDisplay();
+            displaySDCardWarning(); // Zeige die Warnung an
+        }
+    }
+    else
+    {
+        if (!sdCardAvailable) // SD-Karte wurde wieder eingesetzt
+        {
+            sdCardAvailable = true; // SD-Karte ist wieder verfügbar
+            Serial.println("SD-Karte wieder eingesetzt!");
+        }
+    }
+}
+
 void testOLED()
 {
   TFT_eSPI tft = TFT_eSPI();
@@ -340,6 +390,19 @@ String currentDate()
   return currentDate;
 }
 
+String currentTemperature()
+{
+  // Get the current temperature from the RTC
+  String currentTemperature = String(rtc.getTemperature(), 1) + " C"; // Get temperature in Celsius
+  if (rtc.getTemperature() < 0)
+    currentTemperature = " " + currentTemperature; // Add leading space for negative temperatures
+  else if (rtc.getTemperature() < 10)
+    currentTemperature = "  " + currentTemperature; // Add leading space for single-digit temperatures
+  else if (rtc.getTemperature() < 100)
+    currentTemperature = "   " + currentTemperature; // Add leading space for double-digit temperatures
+  return currentTemperature;
+}
+
 void displayRpm(int rpm)
 {
   tft.fillScreen(TFT_BLACK); // clear screen
@@ -360,7 +423,11 @@ void displayTimestamp()
   tft.setCursor(110, 70);
   tft.print("UTC");
   tft.setTextSize(1);
-  tft.setCursor(25, 110);
+  tft.setCursor(25, 95);
+  tft.print("Temperature: ");
+  tft.setCursor(80, 95);
+  tft.print(currentTemperature());
+  tft.setCursor(20, 110);
   tft.print("press SET to set time");
 }
 
@@ -391,26 +458,46 @@ File openLogFile()
     if (!fileExists)
     {
       // Schreibe Spaltenüberschriften, wenn die Datei neu erstellt wurde
-      file.println("date,time,rpm");
+      // file.println("date,time,rpm,temperature");
+      file.println("time,rpm,temperature");
       Serial.println("Spaltenüberschriften hinzugefügt.");
     }
   }
   return file;
 }
 
-void logData(File file, int rpm)
+void logData(int rpm)
 {
-  if (file)
-  {
-    String logEntry = currentDate() + "," + currentTime() + "," + String(rpm);
-    file.println(logEntry); // Daten in die Datei schreiben
+    // SD-Karte aktivieren
+    selectSDCard();
+
+    // Datei öffnen
+    File file = SD.open("/" + currentDate() + ".csv", FILE_APPEND);
+
+    // Überprüfen, ob die Datei geöffnet werden konnte
+    if (!file)
+    {
+        Serial.println("Fehler: Datei konnte nicht geöffnet werden. SD-Karte möglicherweise entfernt.");
+        sdCardAvailable = false; // SD-Karte als nicht verfügbar markieren
+        selectDisplay();
+        displaySDCardWarning(); // Warnung anzeigen
+        return;
+    }
+
+    // Temperatur auslesen
+    float temperature = rtc.getTemperature();
+
+    // Log-Eintrag erstellen
+    String logEntry = currentTime() + "," + String(rpm) + "," + String(temperature, 1);
+
+    // Daten in die Datei schreiben
+    file.println(logEntry);
     Serial.print("Daten geschrieben: ");
     Serial.println(logEntry);
-  }
-  else
-  {
-    Serial.println("Datei ist nicht geöffnet!");
-  }
+
+    // Datei schließen
+    file.close();
+    Serial.println("Datei geschlossen.");
 }
 
 void closeLogFile(File file)
@@ -420,28 +507,6 @@ void closeLogFile(File file)
     file.close();
     Serial.println("Datei geschlossen.");
   }
-}
-
-void displaySDCardWarning()
-{
-  tft.fillScreen(TFT_RED);
-  tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(2);
-  tft.setCursor(10, 20);
-  tft.print("No SD-card!");
-  delay(2500);
-  tft.setCursor(10, 60);
-  tft.print("Restarting");
-  tft.setCursor(10, 80);
-  tft.print("in 5 sec...");
-  delay(5000);
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(2);
-  tft.setCursor(10, 40);
-  tft.print("Restarting");
-  delay(1000);
-  tft.fillScreen(TFT_BLACK);
 }
 
 void setup()
@@ -499,7 +564,7 @@ void setup()
   tft.setCursor(10, 10);
   tft.print("Display OK");
   digitalWrite(TFT_CS, HIGH); // Display deaktivieren
-  delay(3000);                // Warten auf den Serial Monitor
+  delay(1000);                // Warten auf den Serial Monitor
   // SD-Karte initialisieren
   Serial.println("Versuche, SD-Karte zu initialisieren...");
   selectSDCard();
@@ -542,51 +607,58 @@ void setup()
 
 void loop()
 {
-  unsigned long currentTime = millis();
+    unsigned long currentTime = millis();
 
-  // Überprüfen, ob der Interrupt für die "SET"-Taste ausgelöst wurde
-  if (startRTCSetup)
-  {
-    noInterrupts();        // Interrupts deaktivieren, während das Flag bearbeitet wird
-    startRTCSetup = false; // Flag zurücksetzen
-    interrupts();          // Interrupts wieder aktivieren
-
-    // Interrupt für die "SET"-Taste deaktivieren
-    detachInterrupt(digitalPinToInterrupt(BUTTON_SET));
-
-    Serial.println("SET-Taste gedrückt, RTC-Einstellung starten...");
-    setupRTCWithButtons(); // Funktion zum Einstellen der RTC aufrufen
-    Serial.println("RTC-Einstellung abgeschlossen.");
-    // Verzögerung einfügen, um erneutes Auslösen zu verhindern
-    delay(500); // 500 ms warten
-
-    // Interrupt wieder aktivieren
-    attachInterrupt(digitalPinToInterrupt(BUTTON_SET), handleSetButtonInterrupt, FALLING);
-  }
-
-  // Überprüfen, ob es Zeit für die nächste Messung ist
-  if (currentTime - lastOutputTime >= measurementTime * 1000)
-  {
-    unsigned long impulseCount = Rpm_Count - Rpm_Count_LastSecond;
-    Rpm = ((int)impulseCount * 60) / measurementTime / TRIGGERS_PER_REV;
-
-    lastOutputTime = currentTime;
-    Rpm_Count_LastSecond = Rpm_Count;
-
-    if (TEST)
+    // Überprüfen, ob die SD-Karte noch verfügbar ist
+    if (!sdCardAvailable)
     {
-      monitorDebug();
+        checkSDCard(); // Versuche, die SD-Karte erneut zu initialisieren
+        if (!sdCardAvailable)
+        {
+            return; // Wenn die SD-Karte weiterhin nicht verfügbar ist, keine weiteren Aktionen ausführen
+        }
     }
 
-    // Display aktivieren und Daten anzeigen
-    selectDisplay();
-    displayRpm(Rpm);
-    displayTimestamp();
+    // Überprüfen, ob der Interrupt für die "SET"-Taste ausgelöst wurde
+    if (startRTCSetup)
+    {
+        noInterrupts();        // Interrupts deaktivieren, während das Flag bearbeitet wird
+        startRTCSetup = false; // Flag zurücksetzen
+        interrupts();          // Interrupts wieder aktivieren
 
-    // SD-Karte aktivieren und Daten speichern
-    selectSDCard();
-    File logFile = openLogFile(); // Datei öffnen oder erstellen
-    logData(logFile, Rpm);        // Daten schreiben
-    closeLogFile(logFile);        // Datei schließen
-  }
+        // Interrupt für die "SET"-Taste deaktivieren
+        detachInterrupt(digitalPinToInterrupt(BUTTON_SET));
+
+        Serial.println("SET-Taste gedrückt, RTC-Einstellung starten...");
+        setupRTCWithButtons(); // Funktion zum Einstellen der RTC aufrufen
+        Serial.println("RTC-Einstellung abgeschlossen.");
+        // Verzögerung einfügen, um erneutes Auslösen zu verhindern
+        delay(500); // 500 ms warten
+
+        // Interrupt wieder aktivieren
+        attachInterrupt(digitalPinToInterrupt(BUTTON_SET), handleSetButtonInterrupt, FALLING);
+    }
+
+    // Überprüfen, ob es Zeit für die nächste Messung ist
+    if (currentTime - lastOutputTime >= measurementTime * 1000)
+    {
+        unsigned long impulseCount = Rpm_Count - Rpm_Count_LastSecond;
+        Rpm = ((int)impulseCount * 60) / measurementTime / TRIGGERS_PER_REV;
+
+        lastOutputTime = currentTime;
+        Rpm_Count_LastSecond = Rpm_Count;
+
+        if (TEST)
+        {
+            monitorDebug();
+        }
+
+        // Display aktivieren und Daten anzeigen
+        selectDisplay();
+        displayRpm(Rpm);
+        displayTimestamp();
+
+        // Daten auf SD-Karte speichern
+        logData(Rpm);
+    }
 }
