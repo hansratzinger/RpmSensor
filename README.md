@@ -20,6 +20,9 @@
  the Free Software Foundation, either version 3 of the License, or
  any later version.
  
+#### Important! 
+
+To avoid problems concerning the SD-card use max. 16 GB SD-card or even better with a capacity of 8 GB. I had a lot of problems with 32 GB cards of various brands!
 
 -------------------------------------
 ### RELEASE 1.1 HR 2025-04-12 NK
