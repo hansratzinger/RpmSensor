@@ -38,16 +38,28 @@ bool TEST = true; // set to true to enable debug output
 // the pin that is connected to SQW
 #define CLOCK_INTERRUPT_PIN 14
 
-volatile unsigned long Rpm_Count;             // Zähler für Interrupts
-int Rpm;                                      // variable to store the RPM value
-unsigned long lastTime;                       // Variable für die letzte Zeitmessung
-volatile unsigned long lastInterruptTime = 0; // Zeit des letzten Interrupts
+volatile unsigned long Rpm_Count; // Zähler für Interrupts
+int Rpm;                          // variable to store the RPM value
+unsigned long lastTime;           // Variable für die letzte Zeitmessung
 
 unsigned long lastOutputTime = 0; // Zeitpunkt der letzten Ausgabe
 unsigned long lastSecondRpmCount = 0;
 unsigned long Rpm_Count_LastSecond = 0;
+unsigned long lastSetButtonPressTime = 0; // Zeit des letzten "SET"-Tastendrucks
 float boardTime = 0;
 const int measurementTime = 1; // Messzeit in Sekunden
+
+volatile bool startRTCSetup = false;          // Flag, um die Zeiteinstellung zu starten
+volatile unsigned long lastInterruptTime = 0; // Zeit des letzten Interrupts
+void IRAM_ATTR handleSetButtonInterrupt()
+{
+  unsigned long interruptTime = millis();
+  if (interruptTime - lastInterruptTime > 500)
+  {                       // 500 ms Entprellzeit
+    startRTCSetup = true; // Setze das Flag, wenn der Interrupt ausgelöst wird
+    lastInterruptTime = interruptTime;
+  }
+}
 
 void IRAM_ATTR Rpm_isr()
 {
@@ -59,13 +71,17 @@ void IRAM_ATTR Rpm_isr()
   }
 }
 
-String readGPIOStatus(int pin) {
-    int pinStatus = digitalRead(pin); // Status des GPIO-Pins auslesen
-    if (pinStatus == HIGH) {
-        return "HIGH";
-    } else {
-        return "LOW";
-    }
+String readGPIOStatus(int pin)
+{
+  int pinStatus = digitalRead(pin); // Status des GPIO-Pins auslesen
+  if (pinStatus == HIGH)
+  {
+    return "HIGH";
+  }
+  else
+  {
+    return "LOW";
+  }
 }
 
 // LED Funktion vereinfacht
@@ -88,175 +104,131 @@ void debugButtonSettings()
 
 void setupRTCWithButtons()
 {
-  bool buttonPressed = false; // Flag, um zu überprüfen, ob eine Taste gedrückt wurde
-  bool settingComplete = false;
-  bool setHourComplete = false;
-  bool setMinuteComplete = false;
+  enum State
+  {
+    SET_HOUR,
+    SET_MINUTE,
+    SET_SECOND,
+    COMPLETE
+  }; // Zustände für die Zeiteinstellung
+  State currentState = SET_HOUR;
 
-  pinMode(BUTTON_PLUS, INPUT_PULLUP);
-  pinMode(BUTTON_MINUS, INPUT_PULLUP);
-  pinMode(BUTTON_SET, INPUT_PULLUP);
+  unsigned long lastButtonPressTime = 0;   // Zeit des letzten Tastendrucks
+  const unsigned long debounceDelay = 200; // Entprellzeit in Millisekunden
 
   int hour = rtc.now().hour();     // Aktuelle Stunde von der RTC
   int minute = rtc.now().minute(); // Aktuelle Minute von der RTC
   int second = rtc.now().second(); // Aktuelle Sekunde von der RTC
 
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_WHITE);
+  bool stateChanged = true; // Flag, um anzuzeigen, ob sich der Zustand geändert hat
 
-  while (!setHourComplete)
+  // Warten, bis der BUTTON_SET losgelassen wird
+  while (digitalRead(BUTTON_SET) == LOW)
   {
-    // Wenn die Taste gedrückt wurde, Bildschirm löschen
-    if (buttonPressed)
+    delay(10); // Kurze Verzögerung, um den Button-Status zu überprüfen
+  }
+
+  while (currentState != COMPLETE)
+  {
+    if (stateChanged)
     {
+      // Bildschirm nur aktualisieren, wenn sich der Zustand geändert hat
       tft.fillScreen(TFT_BLACK);
-      Serial.print("buttonPressed! Zeilennummer: ");
-      Serial.println(__LINE__);
-      debugButtonSettings();
-      buttonPressed = false; // Setze das Flag zurück
+      tft.setTextSize(2);
+      tft.setCursor(10, 14);
+      tft.printf("Setting Time");
+
+      if (currentState == SET_HOUR)
+      {
+        tft.setCursor(10, 38);
+        tft.printf("UTC Hour: %02d", hour);
+      }
+      else if (currentState == SET_MINUTE)
+      {
+        tft.setCursor(10, 38);
+        tft.printf("Minute:   %02d", minute);
+      }
+      else if (currentState == SET_SECOND)
+      {
+        tft.setCursor(10, 38);
+        tft.printf("Second:   %02d", second);
+      }
+
+      tft.setTextSize(1);
+      tft.setCursor(45, 110);
+      tft.printf("+ / - / Set");
+
+      stateChanged = false; // Anzeige wurde aktualisiert
     }
-    // Zeige die aktuelle Einstellung auf dem Display
-    tft.setTextSize(2);
-    tft.setCursor(10, 14);
-    tft.printf("Setting Time");
-    tft.setCursor(10, 38);
-    tft.printf("UTC Hour: %02d", hour);
-    tft.setTextSize(1);
-    tft.setCursor(45, 110);
-    tft.printf("+ / - / Set");
+
+    // Tastenabfragen mit Entprellung
+    unsigned long currentTime = millis();
 
     // "+"-Taste gedrückt
-    if (digitalRead(BUTTON_PLUS) == LOW)
+    if (digitalRead(BUTTON_PLUS) == LOW && (currentTime - lastButtonPressTime > debounceDelay))
     {
-      hour = (hour + 1) % 24; // Stunden erhöhen (0-23)
-      delay(200);             // Entprellzeit
-      buttonPressed = true;   // Setze das Flag auf true
+      lastButtonPressTime = currentTime;
+      if (currentState == SET_HOUR)
+      {
+        hour = (hour + 1) % 24; // Stunden erhöhen (0-23)
+      }
+      else if (currentState == SET_MINUTE)
+      {
+        minute = (minute + 1) % 60; // Minuten erhöhen (0-59)
+      }
+      else if (currentState == SET_SECOND)
+      {
+        second = (second + 1) % 60; // Sekunden erhöhen (0-59)
+      }
+      stateChanged = true; // Zustand geändert, Anzeige aktualisieren
     }
 
     // "-"-Taste gedrückt
-    if (digitalRead(BUTTON_MINUS) == LOW)
+    if (digitalRead(BUTTON_MINUS) == LOW && (currentTime - lastButtonPressTime > debounceDelay))
     {
-      hour = (hour - 1 + 24) % 24; // Stunden verringern (0-23)
-      delay(200);                  // Entprellzeit
-      buttonPressed = true;        // Setze das Flag auf true
+      lastButtonPressTime = currentTime;
+      if (currentState == SET_HOUR)
+      {
+        hour = (hour - 1 + 24) % 24; // Stunden verringern (0-23)
+      }
+      else if (currentState == SET_MINUTE)
+      {
+        minute = (minute - 1 + 60) % 60; // Minuten verringern (0-59)
+      }
+      else if (currentState == SET_SECOND)
+      {
+        second = (second - 1 + 60) % 60; // Sekunden verringern (0-59)
+      }
+      stateChanged = true; // Zustand geändert, Anzeige aktualisieren
     }
 
     // "SET"-Taste gedrückt
-    if (digitalRead(BUTTON_SET) == LOW)
+    if (digitalRead(BUTTON_SET) == LOW && (currentTime - lastButtonPressTime > debounceDelay))
     {
-      delay(200);             // Entprellzeit
-      setHourComplete = true; // Minuten-Einstellung aktivieren
-    }
-  }
-  buttonPressed = false; // Setze das Flag zurück
-  // pinMode(BUTTON_PLUS, INPUT_PULLUP);
-  // pinMode(BUTTON_MINUS, INPUT_PULLUP);
-  // pinMode(BUTTON_SET, INPUT_PULLUP);
-    Serial.print("buttonPressed! Zeilennummer: ");
-    Serial.println(__LINE__);
-    debugButtonSettings();
-    while (!setMinuteComplete)
-  {
-    if (buttonPressed)
-    {
-      tft.fillScreen(TFT_BLACK);
-      buttonPressed = false; // Setze das Flag zurück
-      Serial.print("Zeilennummer: ");
-      Serial.println(__LINE__);
-      debugButtonSettings();
-      Serial.println(String("Minute: " + minute));
-          }
-    // Zeige die aktuelle Einstellung auf dem Display
-    tft.setTextSize(2);
-    tft.setCursor(10, 14);
-    tft.printf("Setting Time");
-    tft.setCursor(10, 38);
-    tft.printf("UTC Hour: %02d", hour);
-    tft.setCursor(10, 62);
-    tft.printf("Minute:   %02d", minute);
-    tft.setTextSize(1);
-    tft.setCursor(45, 110);
-    tft.printf("+ / - / Set");
+      lastButtonPressTime = currentTime;
 
-    // "+"-Taste gedrückt
-    if (digitalRead(BUTTON_PLUS) == LOW)
-    {
-      minute = (minute + 1 + 60) % 60; // Minuten erhöhen (0-23)
-      delay(200);                      // Entprellzeit
-      buttonPressed = true;        // Setze das Flag auf true
+      // Warten, bis der Button losgelassen wird
+      while (digitalRead(BUTTON_SET) == LOW)
+      {
+        delay(10); // Kurze Verzögerung, um den Button-Status zu überprüfen
+      }
+
+      if (currentState == SET_HOUR)
+      {
+        currentState = SET_MINUTE; // Wechsel zur Minuten-Einstellung
+      }
+      else if (currentState == SET_MINUTE)
+      {
+        currentState = SET_SECOND; // Wechsel zur Sekunden-Einstellung
+      }
+      else if (currentState == SET_SECOND)
+      {
+        currentState = COMPLETE; // Zeiteinstellung abschließen
+      }
+      stateChanged = true; // Zustand geändert, Anzeige aktualisieren
     }
 
-    // "-"-Taste gedrückt
-    if (digitalRead(BUTTON_MINUS) == LOW)
-    {
-      minute = (minute - 1 + 60) % 60; // Minuten verringern (0-23)
-      delay(200);                      // Entprellzeit
-      buttonPressed = true;        // Setze das Flag auf true
-    }
-
-    // "SET"-Taste gedrückt
-    if (digitalRead(BUTTON_SET) == LOW)
-    {
-      delay(200); // Entprellzeit
-      // Wechsel zur Sekunden-Einstellung
-      setMinuteComplete = true; // Minuten-Einstellung aktivieren
-    }
-  }
-  buttonPressed = false; // Setze das Flag zurück
-  if (TEST)
-  {
-    Serial.print("Zeilennummer: ");
-    Serial.println(__LINE__);
-    debugButtonSettings();
-    Serial.println(String("Minute: " + minute));
-    Serial.println(String("Second: " + second));
-    delay(2000); // TEST
-  }
-  // Sekunden einstellen
-  while (!settingComplete)
-  {
-    if (buttonPressed)
-    {
-      tft.fillScreen(TFT_BLACK);
-      buttonPressed = false; // Setze das Flag zurück
-    }
-
-    // Zeige die aktuelle Einstellung auf dem Display
-    tft.setTextSize(2);
-    tft.setCursor(10, 14);
-    tft.printf("Setting Time");
-    tft.setCursor(10, 38);
-    tft.printf("UTC Hour: %02d", hour);
-    tft.setCursor(10, 62);
-    tft.printf("Minute:   %02d", minute);
-    tft.setCursor(10, 88);
-    tft.printf("Second:   %02d", second);
-    tft.setTextSize(1);
-    tft.setCursor(45, 110);
-    tft.printf("+ / - / Set");
-
-    // "+"-Taste gedrückt
-    if (digitalRead(BUTTON_PLUS) == LOW)
-    {
-      second = (second + 1) % 60; // Minuten erhöhen (0-59)
-      delay(200);                 // Entprellzeit
-      buttonPressed = true;        // Setze das Flag auf true
-    }
-
-    // "-"-Taste gedrückt
-    if (digitalRead(BUTTON_MINUS) == LOW)
-    {
-      second = (second - 1 + 60) % 60; // Minuten verringern (0-59)
-      delay(200);                      // Entprellzeit
-      buttonPressed = true;        // Setze das Flag auf true
-    }
-
-    // "SET"-Taste gedrückt
-    if (digitalRead(BUTTON_SET) == LOW)
-    {
-      delay(200);
-      settingComplete = true;   // Zeiteinstellung abgeschlossen
-    }
+    delay(50); // Kurze Verzögerung, um die Anzeige zu stabilisieren
   }
 
   // RTC mit den neuen Werten aktualisieren
@@ -264,7 +236,7 @@ void setupRTCWithButtons()
   tft.fillScreen(TFT_BLACK);
   tft.setCursor(10, 10);
   tft.print("UTC time set");
-  delay(2000);
+  delay(200);
 }
 
 void debugPinSettings()
@@ -288,6 +260,14 @@ void debugPinSettings()
   Serial.println(IR_SENSOR_PIN);
   Serial.print("LED_PIN: ");
   Serial.println(LED_PIN);
+  Serial.print("BUTTON_PLUS: ");
+  Serial.println(BUTTON_PLUS);
+  Serial.print("BUTTON_MINUS: ");
+  Serial.println(BUTTON_MINUS);
+  Serial.print("BUTTON_SET: ");
+  Serial.println(BUTTON_SET);
+  Serial.print("CLOCK_INTERRUPT_PIN: ");
+  Serial.println(CLOCK_INTERRUPT_PIN);
 }
 
 void selectDisplay()
@@ -369,12 +349,12 @@ void displayTimestamp()
   tft.setCursor(10, 70);
   tft.setTextColor(TFT_WHITE);
   tft.setTextSize(2);
-  // tft.setTextWrap(true);
   tft.print(currentTime());
-  // tft.setTextSize(2);
   tft.setCursor(110, 70);
-  // tft.print(currentDate());
   tft.print("UTC");
+  tft.setTextSize(1);
+  tft.setCursor(25, 110);
+  tft.print("press SET to set time");
 }
 
 void monitorDebug()
@@ -462,6 +442,15 @@ void setup()
   Serial.begin(115200);
   Serial.println("Setup gestartet");
   // delay(2000); // Warten auf den Serial Monitor
+
+  // Pin-Modus für die Buttons
+  pinMode(BUTTON_PLUS, INPUT_PULLUP);
+  pinMode(BUTTON_MINUS, INPUT_PULLUP);
+  pinMode(BUTTON_SET, INPUT_PULLUP);
+
+  // Interrupt für die "SET"-Taste konfigurieren
+  attachInterrupt(digitalPinToInterrupt(BUTTON_SET), handleSetButtonInterrupt, FALLING);
+
   debugPinSettings(); // Pin-Einstellungen debuggen
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
@@ -536,8 +525,10 @@ void setup()
   setLed(false, LED_PIN);
   Serial.println("Rpm Sensor bereit");
   selectDisplay();
-  setupRTCWithButtons();      // RTC mit Tasten einstellen
+  // setupRTCWithButtons();      // RTC mit Tasten einstellen
   digitalWrite(TFT_CS, HIGH); // Display deaktivieren
+  debugPinSettings();         // Pin-Einstellungen debuggen
+  debugButtonSettings();      // Button-Einstellungen debuggen
 
   Serial.println("Setup abgeschlossen");
 }
@@ -545,6 +536,28 @@ void setup()
 void loop()
 {
   unsigned long currentTime = millis();
+
+  // Überprüfen, ob der Interrupt für die "SET"-Taste ausgelöst wurde
+  if (startRTCSetup)
+  {
+    noInterrupts();        // Interrupts deaktivieren, während das Flag bearbeitet wird
+    startRTCSetup = false; // Flag zurücksetzen
+    interrupts();          // Interrupts wieder aktivieren
+
+    // Interrupt für die "SET"-Taste deaktivieren
+    detachInterrupt(digitalPinToInterrupt(BUTTON_SET));
+
+    Serial.println("SET-Taste gedrückt, RTC-Einstellung starten...");
+    setupRTCWithButtons(); // Funktion zum Einstellen der RTC aufrufen
+    Serial.println("RTC-Einstellung abgeschlossen.");
+    // Verzögerung einfügen, um erneutes Auslösen zu verhindern
+    delay(500); // 500 ms warten
+
+    // Interrupt wieder aktivieren
+    attachInterrupt(digitalPinToInterrupt(BUTTON_SET), handleSetButtonInterrupt, FALLING);
+  }
+
+  // Überprüfen, ob es Zeit für die nächste Messung ist
   if (currentTime - lastOutputTime >= measurementTime * 1000)
   {
     unsigned long impulseCount = Rpm_Count - Rpm_Count_LastSecond;
