@@ -24,8 +24,12 @@
 -------------------------------------
 ### RELEASE 1.1 HR 2025-04-12 NK
 
-Added failure procedure for SD card
-Added temperature measurement and logging
+Added features:
+
+- failure procedure for SD card
+- temperature measurement and logging
+
+
 
 
 
