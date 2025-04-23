@@ -24,15 +24,11 @@
 
 To avoid problems concerning the SD-card use max. 16 GB SD-card or even better with a capacity of 8 GB. I had a lot of problems with 32 GB cards of various brands!
 
--------------------------------------
-### RELEASE 1.1 HR 2025-04-12 NK
-
-Added features:
-
-- failure procedure for SD card
-- temperature measurement and logging
-
-
+### RELEASE 2.0 HR 2025-04-22 NK
+-------------------------------------------------
+Changed from TFT + SD to OLED display
+### RELEASE 2.1 HR 2025-04-23 NK
+-------------------------------------------------
 
 
 
