@@ -2,13 +2,12 @@
 // RpmSensorRtcOled.cpp
 // -------------------------------------------------
 // Usage for measuring RMP (Revolutions per Minute) with an infrared sensor
-// and displaying the result on an OLED display. The DS3231 RTC is used to keep track of time.
+// and displaying the result on OLED displays. The DS3231 RTC is used to keep track of time.
 // The SD card is used to log the data. The program allows setting the RTC time using buttons on the ESP32 board.
-// ESP32 DS3231 RTC + OLED Display + Infrared Sensor
-// RELEASE 2.0 HR 2025-04-22 NK
+// ESP32 DS3231 RTC + Two OLED Displays + Infrared Sensor
+// RELEASE 3.0 HR 2025-04-25 NK
 // -------------------------------------------------
-// Changed from TFT + SD to OLED display
-// RELEASE 2.1 HR 2025-04-23 NK
+// Changed from single OLED to dual OLED displays (RPM and Time)
 // -------------------------------------------------
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -35,17 +34,19 @@
 #define IR_SENSOR_PIN 15 // GPIO15: Infrarotsensor Pin
 #define LED_PIN 12      // GPIO12: Kontroll-LED Pin
 
-// I2C Pins für einen Bus
+// I2C Pins für einen gemeinsamen Bus
 #define SDA_PIN 21
 #define SCL_PIN 22
 
-// OLED Display Adresse
-#define OLED_ADDR 0x3C // Standard-Adresse für die meisten SSD1306 Displays
+// OLED Display Adressen (7-Bit Format)
+#define OLED1_ADDR 0x3D // 0x7A in 8-Bit-Format (RPM-Display)
+#define OLED2_ADDR 0x3C // 0x78 in 8-Bit-Format (Zeit-Display)
 
-// Initialisierung des OLED-Displays
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C display(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+// Initialisierung der OLED-Displays am gleichen Bus
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C displayRPM(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C displayTime(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 
-// Globale Statusvariable für SD-Karte hinzufügen
+// Globale Statusvariable für SD-Karte
 bool sdCardAvailable = false;
 
 // Globale Variable für den aktuellen Dateinamen
@@ -58,26 +59,16 @@ RTC_DS3231 rtc;
 bool TEST = false; // Debug-Modus
 #define CLOCK_INTERRUPT_PIN 14
 
-// Display-Modus
-enum DisplayMode {
-  TIME_MODE,
-  RPM_MODE
-};
-
-DisplayMode currentDisplayMode = TIME_MODE;
-unsigned long lastDisplaySwitch = 0;
-const unsigned long DISPLAY_SWITCH_INTERVAL = 10000; // 3 Sekunden zwischen Anzeigewechsel
-
 // Zustandsarten für die RTC-Einstellung
 enum SetupState {
   NORMAL,
-  SET_DAY,     // Zusätzlich: Tag einstellen
-  SET_MONTH,   // Zusätzlich: Monat einstellen
-  SET_YEAR,    // Zusätzlich: Jahr einstellen
-  SET_HOUR,
-  SET_MINUTE,
-  SET_SECOND,
-  COMPLETE
+  SET_DAY,     // Tag einstellen
+  SET_MONTH,   // Monat einstellen
+  SET_YEAR,    // Jahr einstellen
+  SET_HOUR,    // Stunden einstellen
+  SET_MINUTE,  // Minuten einstellen
+  SET_SECOND,  // Sekunden einstellen
+  COMPLETE     // Setup abgeschlossen
 };
 
 volatile SetupState currentState = NORMAL;
@@ -88,9 +79,9 @@ volatile bool buttonPressed = false;
 int hour = 0;
 int minute = 0;
 int second = 0;
-int day = 1;     // Neu: Tag
-int month = 5;   // Neu: Monat
-int year = 2025; // Neu: Jahr
+int day = 1;     // Tag
+int month = 5;   // Monat
+int year = 2025; // Jahr
 
 // RPM-Messung
 volatile unsigned long Rpm_Count; // Zähler für Interrupts
@@ -100,9 +91,18 @@ unsigned long lastTime;           // Variable für die letzte Zeitmessung
 unsigned long lastOutputTime = 0; // Zeitpunkt der letzten Ausgabe
 unsigned long lastSecondRpmCount = 0; // Zeitpunkt der letzten Sekundenmessung
 
-// Interrupt-Service-Routine für den RPM-Sensor
+// Entprellzeit für den IR-Sensor (in Mikrosekunden)
+const unsigned long IR_DEBOUNCE_TIME = 5000; // 5ms Entprellzeit
+volatile unsigned long lastIrInterruptTime = 0;
+
 void IRAM_ATTR Rpm_isr() {
-  Rpm_Count++;
+  unsigned long interruptTime = micros(); // Nutze Mikrosekunden für präzisere Messung
+  
+  // Nur zählen, wenn genügend Zeit seit dem letzten Interrupt vergangen ist
+  if (interruptTime - lastIrInterruptTime > IR_DEBOUNCE_TIME) {
+    Rpm_Count++;
+    lastIrInterruptTime = interruptTime;
+  }
 }
 
 // Variable für die Entprellung hinzufügen
@@ -162,43 +162,130 @@ void updateTimeFromRTC() {
   second = now.second();
 }
 
-// Funktion zur Anzeige der Zeit
-void displayTime() {
-  display.clearBuffer();
+// Funktion zur Anzeige der Zeit auf dem Zeit-Display
+void showTime() {
+  displayTime.clearBuffer();
   
   DateTime now = rtc.now(); // Direkt vom RTC für Aktualität
   
-  display.setFont(u8g2_font_inb19_mf); // Größere Schrift für die Uhrzeit
-  display.setCursor(5, 30);
+  displayTime.setFont(u8g2_font_inb19_mf); // Größere Schrift für die Uhrzeit
+  displayTime.setCursor(5, 30);
   
   // Formatieren der Zeit mit führenden Nullen
   char timeStr[9];
   sprintf(timeStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
-  display.print(timeStr);
+  displayTime.print(timeStr);
   
-  display.setFont(u8g2_font_helvB10_tf); // Kleinere Schrift für das Datum
-  display.setCursor(15, 55);
+  displayTime.setFont(u8g2_font_helvB10_tf); // Kleinere Schrift für das Datum
+  displayTime.setCursor(15, 55);
   
   char dateStr[16]; // Größer für zusätzlichen UTC-Text
   sprintf(dateStr, "%02d.%02d.%04d UTC", now.day(), now.month(), now.year());
-  display.print(dateStr);
+  displayTime.print(dateStr);
   
-  display.sendBuffer();
+  displayTime.sendBuffer();
 }
 
-// Funktion zur Anzeige der RPM
-void displayRPM() {
-  display.clearBuffer();
+// Funktion zur Anzeige der RPM auf dem RPM-Display
+void showRPM() {
+  displayRPM.clearBuffer();
   
-  display.setFont(u8g2_font_inb19_mf);
-  display.setCursor(5, 30);
-  display.print("RPM:");
+  displayRPM.setFont(u8g2_font_inb19_mf);
+  displayRPM.setCursor(5, 30);
+  displayRPM.print("RPM:");
   
-  display.setFont(u8g2_font_inb24_mf); // Größte Schrift für den RPM-Wert
-  display.setCursor(5, 60);
-  display.print(Rpm);
+  displayRPM.setFont(u8g2_font_inb24_mf); // Größte Schrift für den RPM-Wert
+  displayRPM.setCursor(5, 60);
+  displayRPM.print(Rpm);
   
-  display.sendBuffer();
+  // Wenn keine SD-Karte verfügbar ist, "NO CARD" anzeigen
+  if (!sdCardAvailable) {
+    displayRPM.setFont(u8g2_font_helvB08_tf); // Kleinere Schrift für die Warnung
+    displayRPM.setCursor(80, 20);
+    displayRPM.print("NO");
+    displayRPM.setCursor(80, 30);
+    displayRPM.print("CARD");
+  }
+  
+  displayRPM.sendBuffer();
+}
+
+// Alternative Initialisierungsmethode ohne direkte Kommandos
+void initDisplayWithContrast() {
+  // Explizite Adresszuweisung
+  displayRPM.setI2CAddress(0x7A); // 8-bit
+  
+  // Einfachere Initialisierung
+  displayRPM.begin();
+  
+  // Zeitverzögerung für Stabilisierung
+  delay(200);
+  
+  // Display explizit einschalten
+  displayRPM.setPowerSave(0);
+  
+  // Test-Anzeige
+  displayRPM.clearBuffer();
+  displayRPM.setFont(u8g2_font_inb24_mf);
+  displayRPM.setCursor(15, 40);
+  displayRPM.print("RPM INIT");
+  displayRPM.sendBuffer();
+  
+  // Zusätzliche Verzögerung
+  delay(100);
+}
+
+// Test beider Displays mit expliziten Adressen
+void testDisplays() {
+  // Explizite Adressenzuweisung für den RPM-Display-Test
+  Wire.beginTransmission(0x3D); // 0x7A in 8-Bit = 0x3D in 7-Bit
+  if (Wire.endTransmission() == 0) {
+    Serial.println("RPM-Display auf 0x3D ist erreichbar");
+    
+    displayRPM.setI2CAddress(0x7A); // Direkte 8-Bit-Adresse
+    displayRPM.clearBuffer();
+    displayRPM.setFont(u8g2_font_inb24_mf);
+    displayRPM.setCursor(15, 40);
+    displayRPM.print("RPM TEST");
+    displayRPM.sendBuffer();
+    
+    Serial.println("RPM-Display Test gesendet");
+  } else {
+    Serial.println("RPM-Display auf 0x3D ist NICHT erreichbar!");
+  }
+  delay(2000);
+  
+  // Explizite Adressenzuweisung für den Zeit-Display-Test
+  Wire.beginTransmission(0x3C); // 0x78 in 8-Bit = 0x3C in 7-Bit
+  if (Wire.endTransmission() == 0) {
+    Serial.println("Time-Display auf 0x3C ist erreichbar");
+    
+    displayTime.setI2CAddress(0x78); // Direkte 8-Bit-Adresse
+    displayTime.clearBuffer();
+    displayTime.setFont(u8g2_font_inb24_mf);
+    displayTime.setCursor(15, 40);
+    displayTime.print("TIME TEST");
+    displayTime.sendBuffer();
+    
+    Serial.println("Zeit-Display Test gesendet");
+  } else {
+    Serial.println("Zeit-Display auf 0x3C ist NICHT erreichbar!");
+  }
+  delay(2000);
+}
+
+// Funktion zur Anzeige der "NO CARD" Warnung auf dem Zeit-Display
+void showNoCard() {
+  displayTime.clearBuffer();
+  
+  // Deutliche, große Anzeige
+  displayTime.setFont(u8g2_font_inb24_mf); // Größte verfügbare Schrift
+  displayTime.setCursor(15, 30);
+  displayTime.print("NO");
+  displayTime.setCursor(15, 60);
+  displayTime.print("CARD");
+  
+  displayTime.sendBuffer();
 }
 
 // Hilfsfunktion, um die maximale Tagesanzahl für einen Monat zu ermitteln
@@ -221,54 +308,70 @@ int daysInMonth(int month, int year) {
   }
 }
 
-// Funktion zur Anzeige des Setup-Bildschirms
+// Funktion zur Anzeige des Setup-Bildschirms auf beiden Displays
 void displaySetup() {
-  display.clearBuffer();
-  display.setFont(u8g2_font_helvB12_tf);
+  // Auf RPM-Display
+  displayRPM.clearBuffer();
+  displayRPM.setFont(u8g2_font_helvB12_tf);
   
-  display.setCursor(5, 20);
+  displayRPM.setCursor(5, 20);
+  displayRPM.print("Settings");
+  
+  displayRPM.setCursor(5, 40);
+  displayRPM.print("Mode");
+  
+  displayRPM.setCursor(5, 60);
+  displayRPM.print("Use + / -");
+  
+  displayRPM.sendBuffer();
+  
+  // Auf Zeit-Display
+  displayTime.clearBuffer();
+  displayTime.setFont(u8g2_font_helvB12_tf);
+  
+  displayTime.setCursor(5, 20);
   
   if (currentState <= SET_YEAR) {
-    display.print("Setup Date");
+    displayTime.print("Setup Date");
   } else {
-    display.print("Setup Time");
+    displayTime.print("Setup Time");
   }
   
-  display.setCursor(5, 40);
+  displayTime.setCursor(5, 40);
   
   switch(currentState) {
     case SET_DAY:
-      display.print("Day: ");
-      display.print(day);
+      displayTime.print("Day: ");
+      displayTime.print(day);
       break;
     case SET_MONTH:
-      display.print("Month: ");
-      display.print(month);
+      displayTime.print("Month: ");
+      displayTime.print(month);
       break;
     case SET_YEAR:
-      display.print("Year: ");
-      display.print(year);
+      displayTime.print("Year: ");
+      displayTime.print(year);
       break;
     case SET_HOUR:
-      display.print("Hour: ");
-      display.print(hour);
+      displayTime.print("Hour: ");
+      displayTime.print(hour);
       break;
     case SET_MINUTE:
-      display.print("Minute: ");
-      display.print(minute);
+      displayTime.print("Minute: ");
+      displayTime.print(minute);
       break;
     case SET_SECOND:
-      display.print("Second: ");
-      display.print(second);
+      displayTime.print("Second: ");
+      displayTime.print(second);
       break;
     default:
       break;
   }
   
-  display.setCursor(5, 60);
-  display.print("+ / - to change");
+  displayTime.setCursor(5, 60);
+  displayTime.print("+ / - to change");
   
-  display.sendBuffer();
+  displayTime.sendBuffer();
 }
 
 void handleDayChange(bool increase) {
@@ -438,13 +541,22 @@ void setupRTCWithButtons() {
   }
   
   // Bestätigungsnachricht anzeigen
-  display.clearBuffer();
-  display.setFont(u8g2_font_helvB12_tf);
-  display.setCursor(5, 30);
-  display.print("Date & Time Set!");
-  display.setCursor(5, 50);
-  display.print("Returning...");
-  display.sendBuffer();
+  displayTime.clearBuffer();
+  displayTime.setFont(u8g2_font_helvB12_tf);
+  displayTime.setCursor(5, 30);
+  displayTime.print("Date & Time Set!");
+  displayTime.setCursor(5, 50);
+  displayTime.print("Returning...");
+  displayTime.sendBuffer();
+  
+  displayRPM.clearBuffer();
+  displayRPM.setFont(u8g2_font_helvB12_tf);
+  displayRPM.setCursor(5, 30);
+  displayRPM.print("Settings");
+  displayRPM.setCursor(5, 50);
+  displayRPM.print("Complete!");
+  displayRPM.sendBuffer();
+  
   delay(1500);
   
   // Zurück zum Normalmodus
@@ -505,18 +617,42 @@ bool checkSDCard() {
   return true;
 }
 
-// Funktion zur Anzeige der "NO CARD" Warnung
-void displayNoCard() {
-  display.clearBuffer();
+// Im setup() nach Initialisierung des IR-Sensors
+void testIRSensor() {
+  displayRPM.clearBuffer();
+  displayRPM.setFont(u8g2_font_helvB12_tf);
+  displayRPM.setCursor(0, 20);
+  displayRPM.print("Testing IR...");
+  displayRPM.setCursor(0, 40);
+  displayRPM.print("Move object");
+  displayRPM.sendBuffer();
   
-  // Deutliche, große Anzeige
-  display.setFont(u8g2_font_inb24_mf); // Größte verfügbare Schrift
-  display.setCursor(15, 30);
-  display.print("NO");
-  display.setCursor(15, 60);
-  display.print("CARD");
+  // Lokale Zähler für den Test
+  int signalCount = 0;
+  unsigned long testStart = millis();
   
-  display.sendBuffer();
+  // Registriere für 5 Sekunden alle Signale
+  while (millis() - testStart < 5000) {
+    int sensorState = digitalRead(IR_SENSOR_PIN);
+    if (sensorState == LOW) { // Angepasst an deine Sensorlogik
+      signalCount++;
+      digitalWrite(LED_PIN, HIGH); // Visuelle Rückmeldung
+    } else {
+      digitalWrite(LED_PIN, LOW);
+    }
+    delay(10); // Polling-Häufigkeit
+  }
+  
+  // Ergebnis anzeigen
+  displayRPM.clearBuffer();
+  displayRPM.setCursor(0, 20);
+  displayRPM.print("IR Test Result:");
+  displayRPM.setCursor(0, 40);
+  displayRPM.print("Signals: ");
+  displayRPM.print(signalCount);
+  displayRPM.sendBuffer();
+  
+  delay(2000);
 }
 
 // Haupteinrichtung
@@ -539,31 +675,61 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   
-  // Display initialisieren
-  display.begin();
-  display.clearBuffer();
-  display.setFont(u8g2_font_helvB12_tf);
-  display.setCursor(0, 20);
-  display.print("RPM Sensor");
-  display.setCursor(0, 40);
-  display.print("Display OK");
-  display.sendBuffer();
-  delay(500);
+  // Im setup()
+  // Displays initialisieren
+  if (!displayRPM.begin()) {
+    Serial.println("RPM Display (0x7A) konnte nicht initialisiert werden");
+    // Alternativer Versuch mit expliziter Adresse
+    displayRPM.setI2CAddress(0x7A);
+    if (!displayRPM.begin()) {
+      Serial.println("Zweiter Versuch fehlgeschlagen");
+    }
+  }else {
+    Serial.println("RTC Display erfolgreich initialisiert");
+  }
+  
+  if (!displayTime.begin()) {
+    Serial.println("Time Display (0x78) konnte nicht initialisiert werden");
+  } else {
+    Serial.println("Time Display erfolgreich initialisiert");
+  }
+
+  // Speziell für das RPM-Display
+  initDisplayWithContrast();
+  testDisplays();
+  // Willkommensnachricht auf beiden Displays anzeigen
+  displayRPM.clearBuffer();
+  displayRPM.setFont(u8g2_font_helvB12_tf);
+  displayRPM.setCursor(0, 20);
+  displayRPM.print("RPM Sensor");
+  displayRPM.setCursor(0, 40);
+  displayRPM.print("RPM Display");
+  displayRPM.sendBuffer();
+  
+  displayTime.clearBuffer();
+  displayTime.setFont(u8g2_font_helvB12_tf);
+  displayTime.setCursor(0, 20);
+  displayTime.print("RPM Sensor");
+  displayTime.setCursor(0, 40);
+  displayTime.print("Time Display");
+  displayTime.sendBuffer();
+  
+  delay(1000);
   
   // RTC initialisieren
-  display.clearBuffer();
-  display.setCursor(0, 20);
-  display.print("Initializing");
-  display.setCursor(0, 40);
-  display.print("RTC...");
-  display.sendBuffer();
+  displayTime.clearBuffer();
+  displayTime.setCursor(0, 20);
+  displayTime.print("Initializing");
+  displayTime.setCursor(0, 40);
+  displayTime.print("RTC...");
+  displayTime.sendBuffer();
   
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC!");
-    display.clearBuffer();
-    display.setCursor(0, 30);
-    display.print("RTC Error!");
-    display.sendBuffer();
+    displayTime.clearBuffer();
+    displayTime.setCursor(0, 30);
+    displayTime.print("RTC Error!");
+    displayTime.sendBuffer();
     
     while (1) delay(10);
   }
@@ -576,10 +742,10 @@ void setup() {
   rtc.disableAlarm(2);
   
   // RTC Status anzeigen
-  display.clearBuffer();
-  display.setCursor(0, 20);
-  display.print("RTC OK");
-  display.sendBuffer();
+  displayTime.clearBuffer();
+  displayTime.setCursor(0, 20);
+  displayTime.print("RTC OK");
+  displayTime.sendBuffer();
   
   // Erste Zeitübernahme vom RTC mit Debug-Ausgabe
   DateTime initialTime = rtc.now();
@@ -594,49 +760,48 @@ void setup() {
   // Zeit aus RTC holen oder bei Bedarf einstellen
   if (rtc.lostPower()) {
     Serial.println("RTC lost power, setting default time!");
-    display.clearBuffer();
-    display.setCursor(0, 20);
-    display.print("RTC lost power");
-    display.setCursor(0, 40);
-    display.print("Setting time...");
-    display.sendBuffer();
+    displayTime.clearBuffer();
+    displayTime.setCursor(0, 20);
+    displayTime.print("RTC lost power");
+    displayTime.setCursor(0, 40);
+    displayTime.print("Setting time...");
+    displayTime.sendBuffer();
     
     // Standardzeit setzen (22.04.2025 12:00:00)
     rtc.adjust(DateTime(2025, 4, 22, 12, 0, 0));
     delay(1000);
   } else {
-    display.clearBuffer();
-    display.setCursor(0, 20);
-    display.print("RTC time:");
-    display.setCursor(0, 40);
+    displayTime.clearBuffer();
+    displayTime.setCursor(0, 20);
+    displayTime.print("RTC time:");
+    displayTime.setCursor(0, 40);
     
     DateTime now = rtc.now();
     char timeStr[20];
     sprintf(timeStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
-    display.print(timeStr);
-    display.sendBuffer();
+    displayTime.print(timeStr);
+    displayTime.sendBuffer();
     delay(1000);
   }
   
   updateTimeFromRTC();
   
-   // SD-Karte initialisieren (im setup())
-  display.clearBuffer();
-  display.setCursor(0, 20);
-  display.print("Initializing");
-  display.setCursor(0, 40);
-  display.print("SD card...");
-  display.sendBuffer();
+  // SD-Karte initialisieren
+  displayRPM.clearBuffer();
+  displayRPM.setCursor(0, 20);
+  displayRPM.print("Initializing");
+  displayRPM.setCursor(0, 40);
+  displayRPM.print("SD card...");
+  displayRPM.sendBuffer();
   
   sdCardAvailable = checkSDCard();
-  // Im setup():
   if (sdCardAvailable) {
     Serial.println("SD-Karte erfolgreich initialisiert");
     
-    display.clearBuffer();
-    display.setCursor(0, 20);
-    display.print("SD Card OK");
-    display.sendBuffer();
+    displayRPM.clearBuffer();
+    displayRPM.setCursor(0, 20);
+    displayRPM.print("SD Card OK");
+    displayRPM.sendBuffer();
     
     // Neuen Dateinamen generieren
     currentLogFileName = getNextFileName();
@@ -649,11 +814,11 @@ void setup() {
       dataFile.println("Date,UTC,RPM,Temperatur");
       dataFile.close();
       
-      // Bei der Anzeige des Dateinamens (in setup oder SD-Karten-Erkennung)
-      display.clearBuffer();
-      display.setFont(u8g2_font_helvB10_tf);  // Etwas kleinere Schrift für mehr Platz
-      display.setCursor(0, 15);
-      display.print("Log file:");
+      // Bei der Anzeige des Dateinamens
+      displayRPM.clearBuffer();
+      displayRPM.setFont(u8g2_font_helvB10_tf);  // Etwas kleinere Schrift für mehr Platz
+      displayRPM.setCursor(0, 15);
+      displayRPM.print("Log file:");
       
       // Zeigt nur Datum und Uhrzeit an, ohne Pfad und Präfix
       String shortFileName = currentLogFileName;
@@ -664,64 +829,72 @@ void setup() {
       int underscorePos = shortFileName.indexOf('_');
       if (underscorePos != -1) {
         // Datum
-        display.setCursor(0, 35);
-        display.print(shortFileName.substring(0, underscorePos));
+        displayRPM.setCursor(0, 35);
+        displayRPM.print(shortFileName.substring(0, underscorePos));
         
         // Zeit
-        display.setCursor(0, 55);
-        display.print(shortFileName.substring(underscorePos + 1));
+        displayRPM.setCursor(0, 55);
+        displayRPM.print(shortFileName.substring(underscorePos + 1));
       } else {
         // Falls kein Unterstrich vorhanden ist, zeige den gesamten Namen
-        display.setCursor(0, 35);
-        display.print(shortFileName);
+        displayRPM.setCursor(0, 35);
+        displayRPM.print(shortFileName);
       }
       
-      display.sendBuffer();
+      displayRPM.sendBuffer();
     }
   } else {
     Serial.println("SD-Karte konnte nicht initialisiert werden!");
     
-    display.clearBuffer();
-    display.setCursor(0, 20);
-    display.print("SD Card Error!");
-    display.setCursor(0, 40);
-    display.print("Logging disabled");
-    display.sendBuffer();
+    displayRPM.clearBuffer();
+    displayRPM.setCursor(0, 20);
+    displayRPM.print("SD Card Error!");
+    displayRPM.setCursor(0, 40);
+    displayRPM.print("Logging disabled");
+    displayRPM.sendBuffer();
+    
+    // Zeige NO CARD Warnung auf dem Zeit-Display
+    showNoCard();
   }
   
   delay(1000);
   
   // RPM Sensor initialisieren
-  display.clearBuffer();
-  display.setCursor(0, 20);
-  display.print("Initializing");
-  display.setCursor(0, 40);
-  display.print("RPM sensor...");
-  display.sendBuffer();
-  
+  displayRPM.clearBuffer();
+  displayRPM.setCursor(0, 20);
+  displayRPM.print("Initializing");
+  displayRPM.setCursor(0, 40);
+  displayRPM.print("RPM sensor...");
+  displayRPM.sendBuffer();
+
+  testIRSensor(); // Teste den IR-Sensor und zeige die Ergebnisse an
+  delay(10000);
   Rpm_Count = 0;
   lastTime = millis();
   lastSecondRpmCount = millis();
   Rpm_Count_LastSecond = 0;
   lastOutputTime = millis();
+    // attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), Rpm_isr, CHANGE);
+  // oder
   attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), Rpm_isr, FALLING);
   
   // SET-Taste Interrupt konfigurieren
   attachInterrupt(digitalPinToInterrupt(BUTTON_SET), handleSetButtonInterrupt, FALLING);
   
   // Setup abgeschlossen
-  display.clearBuffer();
-  display.setCursor(0, 20);
-  display.print("Setup");
-  display.setCursor(0, 40);
-  display.print("Complete!");
-  display.sendBuffer();
+  displayRPM.clearBuffer();
+  displayRPM.setCursor(0, 20);
+  displayRPM.print("Setup");
+  displayRPM.setCursor(0, 40);
+  displayRPM.print("Complete!");
+  displayRPM.sendBuffer();
   
   delay(1500);
   
-  // Initialisiere die Anzeige
+  // Initialisiere die Anzeigen
   updateTimeFromRTC();
-  displayTime();
+  showTime(); // Korrigiert von displayTime()
+  showRPM(); // Korrigiert von displayRPM()
   
   Serial.println("Setup abgeschlossen");
 }
@@ -736,7 +909,8 @@ void loop() {
   if (currentTime - lastCardCheck >= 3000) {
     bool previousState = sdCardAvailable;
     sdCardAvailable = checkSDCard();
-        // In der SD-Kartenprüfung der loop()-Funktion:
+    
+    // Bei Statusänderung entsprechende Aktion durchführen
     if (previousState != sdCardAvailable) {
       if (sdCardAvailable) {
         Serial.println("SD-Karte angeschlossen");
@@ -753,29 +927,27 @@ void loop() {
           dataFile.close();
           
           // Kurze Bestätigung anzeigen
-          display.clearBuffer();
-          display.setFont(u8g2_font_helvB12_tf);
-          display.setCursor(0, 20);
-          display.print("New log file:");
-          display.setCursor(0, 40);
+          displayRPM.clearBuffer();
+          displayRPM.setFont(u8g2_font_helvB12_tf);
+          displayRPM.setCursor(0, 20);
+          displayRPM.print("New log file:");
+          displayRPM.setCursor(0, 40);
           String shortFileName = currentLogFileName.substring(1);
-          display.print(shortFileName);
-          display.sendBuffer();
-          delay(2000); // Kurz anzeigen
+          displayRPM.print(shortFileName);
+          displayRPM.sendBuffer();
+          delay(2000);
           
-          // Zurück zum aktuellen Anzeigemodus
-          if (currentDisplayMode == TIME_MODE) {
-            displayTime();
-          } else {
-            displayRPM();
-          }
+          // Normale Zeit wieder anzeigen auf Zeit-Display
+          showTime(); // Korrigiert von displayTime()
+          // Normale RPM wieder anzeigen
+          showRPM(); // Korrigiert von displayRPM()
         }
       } else {
         Serial.println("SD-Karte entfernt");
-        // Sofort die Warnung anzeigen, wenn die Karte entfernt wurde
-        if (currentDisplayMode == TIME_MODE) {
-          displayNoCard();
-        }
+        // Auf Zeit-Display NO CARD-Warnung anzeigen
+        showNoCard(); // Korrigiert von displayNoCard()
+        // RPM-Display aktualisieren um den NO CARD-Indikator zu zeigen
+        showRPM(); // Korrigiert von displayRPM()
       }
     }
     
@@ -783,12 +955,26 @@ void loop() {
   }
   
   // RPM berechnen (einmal pro Sekunde)
+   // Verbesserte RPM-Berechnung in der loop()-Funktion
   if (currentTime - lastSecondRpmCount >= 1000) {
-    Rpm = Rpm_Count_LastSecond * 60 / RpmTriggerPerRound;
+    // Bei sehr langsamen Drehzahlen kann es sein, dass innerhalb von 1 Sekunde
+    // gar kein Impuls kommt, deshalb den Maximalwert von 0 setzen
+    if (Rpm_Count_LastSecond == 0) {
+      Rpm = 0;
+    } else {
+      Rpm = Rpm_Count_LastSecond * 60 / RpmTriggerPerRound;
+    }
+    
+    // Debug-Ausgabe für Störungssuche
+    Serial.print("Raw count: ");
+    Serial.print(Rpm_Count_LastSecond);
+    Serial.print(", Calculated RPM: ");
+    Serial.println(Rpm);
+    
     Rpm_Count_LastSecond = Rpm_Count;
     Rpm_Count = 0;
     lastSecondRpmCount = currentTime;
-    
+  
     // Temperatur vom RTC-Modul auslesen
     float temperature = rtc.getTemperature();
     
@@ -815,42 +1001,21 @@ void loop() {
         sdCardAvailable = false; // Fehler beim Schreiben, Status aktualisieren
       }
     }
+    
+    // RPM-Anzeige aktualisieren
+    showRPM(); // Korrigiert von displayRPM()
   }
   
-  // Display-Modus wechseln
-  if (currentTime - lastDisplaySwitch >= DISPLAY_SWITCH_INTERVAL) {
-    if (currentDisplayMode == TIME_MODE) {
-      currentDisplayMode = RPM_MODE;
-      displayRPM();
-    } else {
-      currentDisplayMode = TIME_MODE;
-      // Entscheiden, ob Zeit oder NO CARD angezeigt wird
-      if (sdCardAvailable) {
-        updateTimeFromRTC();
-        displayTime();
-      } else {
-        displayNoCard();
-      }
-    }
-    lastDisplaySwitch = currentTime;
-  }
-  
-  // Zeit aktualisieren bei TIME_MODE (nur bei verfügbarer SD-Karte)
-  if (currentDisplayMode == TIME_MODE && currentTime - lastOutputTime >= 1000) {
+  // Zeit-Anzeige jede Sekunde aktualisieren
+  if (currentTime - lastOutputTime >= 1000) {
     if (sdCardAvailable) {
       updateTimeFromRTC();
-      displayTime();
+      showTime(); // Korrigiert von displayTime()
     } else {
-      // Im TIME_MODE bei fehlender Karte NO CARD anzeigen
-      displayNoCard();
+      // Bei fehlender SD-Karte "NO CARD" anzeigen
+      showNoCard(); // Korrigiert von displayNoCard()
     }
     lastOutputTime = currentTime;
-  }
-  
-  // RPM aktualisieren bei RPM_MODE wenn sich der Wert geändert hat
-  if (currentDisplayMode == RPM_MODE && Rpm != lastRpm) {
-    displayRPM();
-    lastRpm = Rpm;
   }
   
   // Überprüfen, ob die SET-Taste gedrückt wurde
@@ -860,13 +1025,10 @@ void loop() {
     delay(200); // Entprellung
     setupRTCWithButtons();
     
-    // Nach dem Setup Display neu zeichnen
+    // Nach dem Setup Displays neu zeichnen
     updateTimeFromRTC();
-    if (currentDisplayMode == TIME_MODE) {
-      displayTime();
-    } else {
-      displayRPM();
-    }
+    showTime(); // Korrigiert von displayTime()
+    showRPM(); // Korrigiert von displayRPM()
     
     delay(1000); // Längere Verzögerung nach dem Setup
     
