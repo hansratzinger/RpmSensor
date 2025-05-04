@@ -30,7 +30,7 @@
 #define BUTTON_SET 27   // GPIO für die "SET"-Taste
 
 // Neue Konstante für genauere RPM-Messung
-#define RpmTriggerPerRound 2 // 2 Impulse pro Umdrehung für präzisere Messung
+#define RpmTriggerPerRound 3 // 3 Impulse pro Umdrehung für präzisere Messung
 
 #define IR_SENSOR_PIN 15 // GPIO15: Infrarotsensor Pin
 #define LED_PIN 12      // GPIO12: Kontroll-LED Pin
@@ -66,7 +66,7 @@ enum DisplayMode {
 
 DisplayMode currentDisplayMode = TIME_MODE;
 unsigned long lastDisplaySwitch = 0;
-const unsigned long DISPLAY_SWITCH_INTERVAL = 10000; // 3 Sekunden zwischen Anzeigewechsel
+const unsigned long DISPLAY_SWITCH_INTERVAL = 5000; // 5 Sekunden zwischen Anzeigewechsel
 
 // Zustandsarten für die RTC-Einstellung
 enum SetupState {
@@ -102,7 +102,9 @@ unsigned long lastSecondRpmCount = 0; // Zeitpunkt der letzten Sekundenmessung
 
 // Interrupt-Service-Routine für den RPM-Sensor
 void IRAM_ATTR Rpm_isr() {
-  Rpm_Count++;
+  unsigned long temp = Rpm_Count;
+  temp = temp + 1;
+  Rpm_Count = temp;
 }
 
 // Variable für die Entprellung hinzufügen
@@ -193,12 +195,15 @@ void displayRPM() {
   display.setFont(u8g2_font_inb19_mf);
   display.setCursor(5, 30);
   display.print("RPM:");
-  
+    
   display.setFont(u8g2_font_inb24_mf); // Größte Schrift für den RPM-Wert
   display.setCursor(5, 60);
   display.print(Rpm);
   
   display.sendBuffer();
+
+  Serial.print("RPM: ");
+  Serial.println(Rpm);
 }
 
 // Hilfsfunktion, um die maximale Tagesanzahl für einen Monat zu ermitteln
