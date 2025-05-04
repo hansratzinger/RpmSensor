@@ -100,26 +100,33 @@ unsigned long lastTime;           // Variable für die letzte Zeitmessung
 unsigned long lastOutputTime = 0; // Zeitpunkt der letzten Ausgabe
 unsigned long lastSecondRpmCount = 0; // Zeitpunkt der letzten Sekundenmessung
 
-// Interrupt-Service-Routine für den RPM-Sensor
 void IRAM_ATTR Rpm_isr() {
-  unsigned long temp = Rpm_Count;
-  temp = temp + 1;
-  Rpm_Count = temp;
+  static unsigned long lastInterruptTime = 0;
+  unsigned long interruptTime = micros();
+  
+  // Entprellung: Erhöht auf 20ms für unsaubere Impulse (10-15ms im Oszilloskop gesehen)
+  if (interruptTime - lastInterruptTime > 20000) { // 20000 Mikrosekunden = 20 Millisekunden
+    Rpm_Count++;
+    Rpm_Count_LastSecond++;
+    lastInterruptTime = interruptTime;
+  }
 }
 
-// Variable für die Entprellung hinzufügen
-unsigned long lastInterruptTime = 0;
-const unsigned long debounceTime = 500; // 500ms Entprellzeit
+// Umbenennen der globalen Variable zur Vermeidung von Namenskonflikten
+unsigned long lastButtonInterruptTime = 0; // Für Tastenentprellung
+const unsigned long debounceTime = 500;    // 500ms Entprellzeit
 
 void IRAM_ATTR handleSetButtonInterrupt() {
   unsigned long interruptTime = millis();
   
   // Nur bei genügend Abstand zum letzten Interrupt
-  if (interruptTime - lastInterruptTime > debounceTime) {
+  if (interruptTime - lastButtonInterruptTime > debounceTime) {
     buttonPressed = true;
-    lastInterruptTime = interruptTime;
+    lastButtonInterruptTime = interruptTime; // Umbenannte Variable
   }
 }
+
+
 
 // Hilfsfunktion für I2C-Scanner
 void scanI2C() {
@@ -790,10 +797,10 @@ void loop() {
   // RPM berechnen (einmal pro Sekunde)
   if (currentTime - lastSecondRpmCount >= 1000) {
     Rpm = Rpm_Count_LastSecond * 60 / RpmTriggerPerRound;
-    Rpm_Count_LastSecond = Rpm_Count;
+    Rpm_Count_LastSecond = 0; // Auf 0 zurücksetzen, nicht den Wert von Rpm_Count übernehmen
     Rpm_Count = 0;
     lastSecondRpmCount = currentTime;
-    
+
     // Temperatur vom RTC-Modul auslesen
     float temperature = rtc.getTemperature();
     
