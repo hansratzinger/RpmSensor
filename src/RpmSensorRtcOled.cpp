@@ -105,7 +105,7 @@ void IRAM_ATTR Rpm_isr() {
   unsigned long interruptTime = micros();
   
   // Entprellung: Erhöht auf 20ms für unsaubere Impulse (10-15ms im Oszilloskop gesehen)
-  if (interruptTime - lastInterruptTime > 20000) { // 20000 Mikrosekunden = 20 Millisekunden
+  if (interruptTime - lastInterruptTime > 5000) { // 5000 Mikrosekunden = 20 Millisekunden
     Rpm_Count++;
     Rpm_Count_LastSecond++;
     lastInterruptTime = interruptTime;
@@ -251,10 +251,14 @@ void displaySetup() {
   switch(currentState) {
     case SET_DAY:
       display.print("Day: ");
+      // Führende Null bei Tag hinzufügen
+      if (day < 10) display.print("0");
       display.print(day);
       break;
     case SET_MONTH:
       display.print("Month: ");
+      // Führende Null bei Monat hinzufügen
+      if (month < 10) display.print("0");
       display.print(month);
       break;
     case SET_YEAR:
@@ -263,14 +267,20 @@ void displaySetup() {
       break;
     case SET_HOUR:
       display.print("Hour: ");
+      // Führende Null bei Stunde hinzufügen
+      if (hour < 10) display.print("0");
       display.print(hour);
       break;
     case SET_MINUTE:
       display.print("Minute: ");
+      // Führende Null bei Minute hinzufügen
+      if (minute < 10) display.print("0");
       display.print(minute);
       break;
     case SET_SECOND:
       display.print("Second: ");
+      // Führende Null bei Sekunde hinzufügen
+      if (second < 10) display.print("0");
       display.print(second);
       break;
     default:
@@ -742,51 +752,46 @@ void loop() {
   unsigned long currentTime = millis();
   static bool handlingButton = false;
   static int lastRpm = -1;
-  static unsigned long lastCardCheck = 0;
-  
+  static unsigned long lastCardCheck = 0;  
+  // Temperatur vom RTC-Modul auslesen
+  float temperature = rtc.getTemperature();
   // SD-Karten-Status regelmäßig überprüfen (alle 3 Sekunden)
   if (currentTime - lastCardCheck >= 3000) {
     bool previousState = sdCardAvailable;
     sdCardAvailable = checkSDCard();
         // In der SD-Kartenprüfung der loop()-Funktion:
     if (previousState != sdCardAvailable) {
+            // Innerhalb der loop()-Funktion, im SD-Karten-Logging-Teil:
       if (sdCardAvailable) {
-        Serial.println("SD-Karte angeschlossen");
-        
-        // Neuen Dateinamen generieren
-        currentLogFileName = getNextFileName();
-        Serial.print("Neuer Log-Dateiname: ");
-        Serial.println(currentLogFileName);
-        
-        // Neuen Log-Header schreiben
-        File dataFile = SD.open(currentLogFileName, FILE_WRITE);
+        File dataFile = SD.open(currentLogFileName, FILE_APPEND);
         if (dataFile) {
-          dataFile.println("Datum,Zeit,RPM,Temperatur");
+          DateTime now = rtc.now();
+          
+          // Datums- und Zeitformat mit führenden Nullen: YYYY-MM-DD,HH:MM:SS
+          dataFile.print(now.year()); dataFile.print("-");
+          // Führende Nullen für Monat
+          if (now.month() < 10) dataFile.print("0");
+          dataFile.print(now.month()); dataFile.print("-");
+          // Führende Nullen für Tag
+          if (now.day() < 10) dataFile.print("0");
+          dataFile.print(now.day()); dataFile.print(",");
+          
+          // Führende Nullen für Stunde
+          if (now.hour() < 10) dataFile.print("0");
+          dataFile.print(now.hour()); dataFile.print(":");
+          // Führende Nullen für Minute
+          if (now.minute() < 10) dataFile.print("0");
+          dataFile.print(now.minute()); dataFile.print(":");
+          // Führende Nullen für Sekunde
+          if (now.second() < 10) dataFile.print("0");
+          dataFile.print(now.second()); dataFile.print(",");
+          
+          dataFile.print(Rpm); dataFile.print(",");
+          dataFile.println(temperature);
+          
           dataFile.close();
-          
-          // Kurze Bestätigung anzeigen
-          display.clearBuffer();
-          display.setFont(u8g2_font_helvB12_tf);
-          display.setCursor(0, 20);
-          display.print("New log file:");
-          display.setCursor(0, 40);
-          String shortFileName = currentLogFileName.substring(1);
-          display.print(shortFileName);
-          display.sendBuffer();
-          delay(2000); // Kurz anzeigen
-          
-          // Zurück zum aktuellen Anzeigemodus
-          if (currentDisplayMode == TIME_MODE) {
-            displayTime();
-          } else {
-            displayRPM();
-          }
-        }
-      } else {
-        Serial.println("SD-Karte entfernt");
-        // Sofort die Warnung anzeigen, wenn die Karte entfernt wurde
-        if (currentDisplayMode == TIME_MODE) {
-          displayNoCard();
+        } else {
+          sdCardAvailable = false; // Fehler beim Schreiben, Status aktualisieren
         }
       }
     }
@@ -801,8 +806,6 @@ void loop() {
     Rpm_Count = 0;
     lastSecondRpmCount = currentTime;
 
-    // Temperatur vom RTC-Modul auslesen
-    float temperature = rtc.getTemperature();
     
     // Logge die Daten auf die SD-Karte nur wenn sie verfügbar ist
     if (sdCardAvailable) {
