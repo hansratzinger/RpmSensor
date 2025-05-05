@@ -30,10 +30,5 @@ Changed from TFT + SD to OLED display
 ### RELEASE 2.1 HR 2025-04-23 NK
 -------------------------------------------------
 
-### IMPORTANT
 
-#define RpmTriggerPerRound have to be set to the number of triggers multiplied by 2, eg. to measure the RPM of a fan with 3 propeller blades:
-#define RpmTriggerPerRound 6
-
-Because the interrupt will be triggerd when the state of GPIO 15 has been changed.
 
