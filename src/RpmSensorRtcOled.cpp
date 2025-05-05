@@ -30,7 +30,7 @@
 #define BUTTON_SET 27   // GPIO für die "SET"-Taste
 
 // Neue Konstante für genauere RPM-Messung
-#define RpmTriggerPerRound 3 // 3 Impulse pro Umdrehung für präzisere Messung
+#define RpmTriggerPerRound 6 // 6 Impulse pro Umdrehung für präzisere Messung
 
 #define IR_SENSOR_PIN 15 // GPIO15: Infrarotsensor Pin
 #define LED_PIN 12      // GPIO12: Kontroll-LED Pin
@@ -119,10 +119,13 @@ const unsigned long debounceTime = 500;    // 500ms Entprellzeit
 void IRAM_ATTR handleSetButtonInterrupt() {
   unsigned long interruptTime = millis();
   
-  // Nur bei genügend Abstand zum letzten Interrupt
+  // Mehr Filterung hinzufügen
   if (interruptTime - lastButtonInterruptTime > debounceTime) {
-    buttonPressed = true;
-    lastButtonInterruptTime = interruptTime; // Umbenannte Variable
+    // Zusätzliche Prüfung: Ist der Button tatsächlich gedrückt?
+    if (digitalRead(BUTTON_SET) == LOW) { // Annahme: LOW = gedrückt
+      buttonPressed = true;
+      lastButtonInterruptTime = interruptTime;
+    }
   }
 }
 
@@ -161,10 +164,10 @@ void updateTimeFromRTC() {
   DateTime now = rtc.now();
   
   // Debug-Ausgabe
-  Serial.print("RTC Zeit: ");
-  Serial.print(now.hour()); Serial.print(":");
-  Serial.print(now.minute()); Serial.print(":");
-  Serial.println(now.second());
+  // Serial.print("RTC Zeit: ");
+  // Serial.print(now.hour()); Serial.print(":");
+  // Serial.print(now.minute()); Serial.print(":");
+  // Serial.println(now.second());
   
   hour = now.hour();
   minute = now.minute();
@@ -541,6 +544,59 @@ void displayNoCard() {
   display.sendBuffer();
 }
 
+bool initSDCard() {
+  Serial.print("Initialisiere SD-Karte... ");
+  
+  // Überprüfe zuerst, ob die CS-Pin-Definition korrekt ist
+  Serial.print("CS-Pin ist: "); 
+  Serial.println(SD_CS);
+  
+  // SPI-Geschwindigkeit reduzieren für stabilere Kommunikation
+  SPI.setFrequency(4000000); // 4 MHz statt Standard 16/20 MHz
+  
+  // SD Card Initialisierung mit erweiterter Fehlerprüfung
+  if (!SD.begin(SD_CS)) {
+    uint8_t cardType = SD.cardType();
+    
+    Serial.print("SD-Initialisierung fehlgeschlagen. Kartentyp: ");
+    if(cardType == CARD_NONE) {
+      Serial.println("Keine SD-Karte erkannt");
+    } else {
+      Serial.print(cardType);
+      Serial.println(" - Hardware vermutlich korrekt angeschlossen");
+    }
+    
+    // Versuche mit VSPI explizit
+    Serial.println("Versuche mit expliziter SPI-Konfiguration...");
+    SPIClass spiSD(VSPI);
+    spiSD.begin(18, 19, 23, SD_CS); // SCK, MISO, MOSI, SS
+    if (!SD.begin(SD_CS, spiSD)) {
+      Serial.println("Auch mit expliziter SPI-Konfiguration fehlgeschlagen");
+      return false;
+    } else {
+      Serial.println("Erfolg mit expliziter SPI-Konfiguration!");
+      return true;
+    }
+  }
+  
+  Serial.println("SD-Karte initialisiert");
+  
+  // Karteninformationen ausgeben
+  uint8_t cardType = SD.cardType();
+  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  
+  Serial.print("SD-Kartentyp: ");
+  if(cardType == CARD_MMC) Serial.println("MMC");
+  else if(cardType == CARD_SD) Serial.println("SDSC");
+  else if(cardType == CARD_SDHC) Serial.println("SDHC");
+  else Serial.println("UNBEKANNT");
+  
+  Serial.print("SD-Kartengröße: ");
+  Serial.print(cardSize);
+  Serial.println(" MB");
+  
+  return true;
+}
 // Haupteinrichtung
 void setup() {
   Serial.begin(115200);
@@ -642,6 +698,23 @@ void setup() {
   
   updateTimeFromRTC();
   
+  delay(1000);
+  
+  // Mehrere Versuche für die SD-Karten-Initialisierung
+  int sdRetryCount = 0;
+  while(!initSDCard() && sdRetryCount < 3) {
+    Serial.println("SD-Initialisierung fehlgeschlagen, versuche erneut...");
+    delay(1000);
+    sdRetryCount++;
+  }
+  
+  if (sdRetryCount >= 3) {
+    Serial.println("SD-Karte konnte nach mehreren Versuchen nicht initialisiert werden");
+    sdCardAvailable = false;
+  } else {
+    sdCardAvailable = true;
+  }
+
    // SD-Karte initialisieren (im setup())
   display.clearBuffer();
   display.setCursor(0, 20);
@@ -726,10 +799,10 @@ void setup() {
   lastSecondRpmCount = millis();
   Rpm_Count_LastSecond = 0;
   lastOutputTime = millis();
-  attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), Rpm_isr, FALLING);
+  attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), Rpm_isr, CHANGE);
   
   // SET-Taste Interrupt konfigurieren
-  attachInterrupt(digitalPinToInterrupt(BUTTON_SET), handleSetButtonInterrupt, FALLING);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_SET), handleSetButtonInterrupt, RISING);
   
   // Setup abgeschlossen
   display.clearBuffer();
@@ -798,14 +871,30 @@ void loop() {
     
     lastCardCheck = currentTime;
   }
-  
-  // RPM berechnen (einmal pro Sekunde)
+   // RPM berechnen (einmal pro Sekunde)
   if (currentTime - lastSecondRpmCount >= 1000) {
-    Rpm = Rpm_Count_LastSecond * 60 / RpmTriggerPerRound;
-    Rpm_Count_LastSecond = 0; // Auf 0 zurücksetzen, nicht den Wert von Rpm_Count übernehmen
+    // Speichere die Anzahl der Impulse VOR dem Zurücksetzen
+    unsigned long capturedImpulses = Rpm_Count_LastSecond;
+    
+    // Berechnen mit dem korrigierten Wert für RpmTriggerPerRound
+    Rpm = capturedImpulses * 60 / RpmTriggerPerRound;
+    
+    // Debug-Ausgabe VOR dem Zurücksetzen
+    Serial.print("Erfasste Impulse in der letzten Sekunde: ");
+    Serial.println(capturedImpulses);
+    
+    // Jetzt erst zurücksetzen
+    Rpm_Count_LastSecond = 0;
     Rpm_Count = 0;
     lastSecondRpmCount = currentTime;
 
+    // Aktuelle Impulszahl anzeigen
+    static unsigned long lastDebugTime = 0;
+    if (millis() - lastDebugTime > 1000) {  // <-- Dieses if wird immer true sein!
+      Serial.print("Erfasste Impulse in der letzten Sekunde: ");
+      Serial.println(Rpm_Count_LastSecond);  // <-- Dieser Wert ist immer 0 hier!
+      lastDebugTime = millis();
+    }
     
     // Logge die Daten auf die SD-Karte nur wenn sie verfügbar ist
     if (sdCardAvailable) {
