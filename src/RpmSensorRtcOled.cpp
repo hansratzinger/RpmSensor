@@ -53,6 +53,33 @@ bool sdCardAvailable = false;
 // Globale Variable für den aktuellen Dateinamen
 String currentLogFileName;
 
+// EEPROM-bezogene Bibliotheken und Definitionen
+// EEPROM-Spezifikationen
+#define EEPROM_ADDRESS 0x50    // Standard I2C-Adresse für 24C512 EEPROM
+#define EEPROM_SIZE 524288     // 512kB = 512 * 1024 Bytes
+#define EEPROM_PAGE_SIZE 128   // 128 Byte Seite laut Datenblatt
+#define EEPROM_WRITE_CYCLE 5   // 5ms Schreibzyklus
+
+// Struktur für den EEPROM-Header
+struct EEPROMHeader {
+  uint32_t recordCount;        // Anzahl der gespeicherten Datensätze
+  uint32_t nextWriteAddress;   // Nächste freie Adresse zum Schreiben
+  uint8_t initialized;         // Flag ob EEPROM initialisiert wurde (0xAA = ja)
+};
+
+// Struktur für einen Datensatz
+struct LogRecord {
+  uint32_t timestamp;          // UNIX-Timestamp
+  uint16_t rpm;                // RPM-Wert
+  int16_t temperature;         // Temperatur * a100 (um Dezimalstellen zu speichern)
+};
+
+// EEPROM-Verwaltungsvariablen
+EEPROMHeader eepromHeader;
+bool eepromAvailable = false;
+uint32_t lastEepromWrite = 0;
+const uint32_t EEPROM_WRITE_INTERVAL = 10000; // 10 Sekunden zwischen Schreibvorgängen
+
 // RTC Modul
 RTC_DS3231 rtc;
 
