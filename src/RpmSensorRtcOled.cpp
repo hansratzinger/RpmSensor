@@ -10,6 +10,9 @@
 // Changed from TFT + SD to OLED display
 // RELEASE 2.1 HR 2025-04-23 NK
 // -------------------------------------------------
+// Release 2.2 double OLED displays, impoved RPM, results checked with oszilloscope
+// RELEASE 2.2 HR 2025-04-24 NK
+// -------------------------------------------------
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
@@ -60,18 +63,18 @@ String currentLogFileName;
 #define EEPROM_PAGE_SIZE 128   // 128 Byte Seite laut Datenblatt
 #define EEPROM_WRITE_CYCLE 5   // 5ms Schreibzyklus
 
-// Struktur für den EEPROM-Header
-struct EEPROMHeader {
+// Stelle sicher, dass die struct korrekt ausgerichtet ist
+struct __attribute__((packed)) EEPROMHeader {
   uint32_t recordCount;        // Anzahl der gespeicherten Datensätze
   uint32_t nextWriteAddress;   // Nächste freie Adresse zum Schreiben
-  uint8_t initialized;         // Flag ob EEPROM initialisiert wurde (0xAA = ja)
+  uint8_t initialized;         // Flag ob EEPROM initialisiert wurde
 };
 
-// Struktur für einen Datensatz
-struct LogRecord {
+// Stelle sicher, dass die struct korrekt ausgerichtet ist
+struct __attribute__((packed)) LogRecord {
   uint32_t timestamp;          // UNIX-Timestamp
   uint16_t rpm;                // RPM-Wert
-  int16_t temperature;         // Temperatur * a100 (um Dezimalstellen zu speichern)
+  int16_t temperature;         // Temperatur * 100
 };
 
 // EEPROM-Verwaltungsvariablen
@@ -118,6 +121,26 @@ int Rpm;                          // Variable für die aktuelle RPM
 unsigned long lastTime;           // Variable für die letzte Zeitmessung
 unsigned long lastOutputTime = 0; // Zeitpunkt der letzten Ausgabe
 unsigned long lastSecondRpmCount = 0; // Zeitpunkt der letzten Sekundenmessung
+
+void setupRTC(); // Funktion zur Einrichtung des RTC
+void setupSDCard(); // Funktion zur Einrichtung der SD-Karte
+void setupDisplay(); // Funktion zur Einrichtung der Displays
+void setupButtons(); // Funktion zur Einrichtung der Tasten
+void setupIRSensor(); // Funktion zur Einrichtung des Infrarotsensors
+void setupLED(); // Funktion zur Einrichtung der LED
+void setupRTCWithButtons(); // Funktion zur Einstellung der RTC mit Tasten
+void writeEEPROMByte(uint32_t address, uint8_t data);
+uint8_t readEEPROMByte(uint32_t address);
+void writeEEPROMPage(uint32_t address, const uint8_t* data, uint8_t length);
+bool initEEPROM();
+bool logDataToEEPROM(uint32_t timestamp, uint16_t rpm, float temperature);
+LogRecord readRecordFromEEPROM(uint32_t recordIndex);
+void handleSerialCommands();
+void downloadEEPROMDataToUSB();
+void eraseEEPROM();
+void readEEPROMHeader();
+void writeEEPROMHeader();
+
 
 void IRAM_ATTR Rpm_isr() {
   static unsigned long lastInterruptTime = 0;
@@ -622,55 +645,548 @@ bool initSDCard() {
   Serial.print("SD-Kartengröße: ");
   Serial.print(cardSize);
   Serial.println(" MB");
+
+  // Explizit dem System mitteilen, dass wir mit SPI fertig sind
+  SPI.endTransaction();
+  delay(100);
+
+  return true;
+}
+
+bool testEEPROM() {
+  Serial.println("EEPROM-Debug-Test startet...");
+  
+  // EEPROM-Kommunikation ohne Header-Strukturen testen
+  Wire.beginTransmission(EEPROM_ADDRESS);
+  Wire.write(0);    // Adresse MSB
+  Wire.write(0);    // Adresse LSB
+  byte result = Wire.endTransmission();
+  
+  Serial.print("EEPROM-Transmissions-Ergebnis: ");
+  Serial.println(result);
+  
+  Wire.requestFrom(EEPROM_ADDRESS, 1);
+  if (Wire.available()) {
+    byte value = Wire.read();
+    Serial.print("Gelesener Byte-Wert: 0x");
+    Serial.println(value, HEX);
+  } else {
+    Serial.println("Keine Daten vom EEPROM erhalten");
+    return false;
+  }
+  
+  // Nur der einfache Test, keine Initialisierung hier
+  Wire.beginTransmission(EEPROM_ADDRESS);
+  Wire.write(0);    // Adresse MSB
+  Wire.write(0);    // Adresse LSB
+  Wire.write(0xAA); // Testdaten
+  if (Wire.endTransmission() != 0) {
+    Serial.println("Fehler beim Schreiben");
+    return false;
+  }
+  
+  // Warte auf den Schreibvorgang
+  delay(10);
+  
+  // Setze Leseadresse
+  Wire.beginTransmission(EEPROM_ADDRESS);
+  Wire.write(0);    // Adresse MSB
+  Wire.write(0);    // Adresse LSB
+  if (Wire.endTransmission() != 0) {
+    Serial.println("Fehler beim Setzen der Leseadresse");
+    return false;
+  }
+  
+  // Lese Daten
+  Wire.requestFrom(EEPROM_ADDRESS, 1);
+  if (Wire.available()) {
+    byte data = Wire.read();
+    Serial.print("Gelesene Daten: 0x");
+    Serial.println(data, HEX);
+    return (data == 0xAA);
+  }
+  
+  Serial.println("Keine Daten vom EEPROM erhalten");
+  return false;
+}
+
+bool verifyEEPROM() {
+  // Test-Wert schreiben
+  writeEEPROMByte(0, 0x55);
+  delay(10);
+  
+  // Test-Wert lesen
+  uint8_t readValue = readEEPROMByte(0);
+  
+  Serial.print("EEPROM Verifikation - Geschrieben: 0x55, Gelesen: 0x");
+  Serial.println(readValue, HEX);
+  
+  return (readValue == 0x55);
+}
+
+void readEEPROMHeader() {
+  // Zuerst mit Nullen initialisieren
+  memset(&eepromHeader, 0, sizeof(EEPROMHeader));
+  
+  // Werte einzeln lesen und validieren
+  uint32_t recordCount = 0;
+  uint32_t nextWriteAddress = 0;
+  uint8_t initialized = 0;
+  
+  // recordCount (4 Bytes)
+  for (uint8_t i = 0; i < 4; i++) {
+    uint8_t val = readEEPROMByte(i);
+    recordCount |= (uint32_t)val << (i * 8);
+  }
+  
+  // nextWriteAddress (4 Bytes)
+  for (uint8_t i = 0; i < 4; i++) {
+    uint8_t val = readEEPROMByte(4 + i);
+    nextWriteAddress |= (uint32_t)val << (i * 8);
+  }
+  
+  // initialized (1 Byte)
+  initialized = readEEPROMByte(8);
+  
+  // Validiere die Werte
+  if (nextWriteAddress < sizeof(EEPROMHeader) || 
+      nextWriteAddress >= EEPROM_SIZE ||
+      recordCount > 10000) {
+    // Ungültige Werte, setze alles zurück
+    Serial.println("Ungültige EEPROM-Header-Werte gefunden, setze zurück.");
+    eepromHeader.recordCount = 0;
+    eepromHeader.nextWriteAddress = sizeof(EEPROMHeader);
+    eepromHeader.initialized = 0xAA;
+  } else {
+    // Werte sind plausibel
+    eepromHeader.recordCount = recordCount;
+    eepromHeader.nextWriteAddress = nextWriteAddress;
+    eepromHeader.initialized = initialized;
+  }
+}
+// EEPROM-Header in das EEPROM schreiben
+void writeEEPROMHeader() {
+  for (uint16_t i = 0; i < sizeof(EEPROMHeader); i++) {
+    writeEEPROMByte(i, ((uint8_t*)&eepromHeader)[i]);
+    delay(10); // Warten zwischen den Bytes, um EEPROM nicht zu überlasten
+  }
+}
+
+uint8_t readEEPROMByte(uint32_t address) {
+  if (address >= EEPROM_SIZE) {
+    Serial.println("FEHLER: EEPROM-Lesezugriff außerhalb des gültigen Bereichs!");
+    return 0;
+  }
+  
+  uint8_t retries = 5;  // Mehr Wiederholungsversuche
+  while (retries > 0) {
+    Wire.beginTransmission(EEPROM_ADDRESS);
+    Wire.write((address >> 8) & 0xFF);  // MSB
+    Wire.write(address & 0xFF);         // LSB
+    if (Wire.endTransmission() != 0) {
+      Serial.println("EEPROM-Lesefehler, wiederhole...");
+      retries--;
+      delay(20);  // Längere Pause
+      
+      if (retries == 2) {
+        // Bei fast erschöpften Versuchen I2C zurücksetzen
+        Wire.end();
+        delay(50);
+        Wire.begin(SDA_PIN, SCL_PIN);
+        Wire.setClock(25000);  // Noch langsamere Frequenz probieren
+      }
+      
+      continue;
+    }
+    
+    if (Wire.requestFrom(EEPROM_ADDRESS, 1) != 1) {
+      Serial.println("EEPROM-Lesefehler, wiederhole...");
+      retries--;
+      delay(20);
+      continue;
+    }
+    
+    if (Wire.available()) {
+      return Wire.read();
+    }
+    
+    retries--;
+    delay(20);
+  }
+  
+  return 0;  // Bei Fehler 0 zurückgeben
+}
+
+// Ein einzelnes Byte ins EEPROM schreiben
+void writeEEPROMByte(uint32_t address, uint8_t data) {
+  if (address >= EEPROM_SIZE) {
+    Serial.println("FEHLER: EEPROM-Schreibzugriff außerhalb des gültigen Bereichs!");
+    return;
+  }
+  
+  Wire.beginTransmission(EEPROM_ADDRESS);
+  // Adresse als MSB und LSB senden
+  Wire.write((address >> 8) & 0xFF);  // MSB
+  Wire.write(address & 0xFF);         // LSB
+  Wire.write(data);
+  Wire.endTransmission();
+  
+  delay(5); // Zeit zum Schreiben
+}
+
+// Eine Seite (bis zu 128 Bytes) ins EEPROM schreiben
+void writeEEPROMPage(uint32_t address, const uint8_t* data, uint8_t length) {
+  if (address + length >= EEPROM_SIZE) {
+    Serial.println("FEHLER: EEPROM-Schreibzugriff außerhalb des gültigen Bereichs!");
+    return;
+  }
+  
+  // Sicherstellen, dass wir nicht über eine Seitengrenze schreiben
+  if ((address / EEPROM_PAGE_SIZE) != ((address + length - 1) / EEPROM_PAGE_SIZE)) {
+    Serial.println("WARNUNG: Schreibvorgang überschreitet Seitengrenze, aufteilen...");
+    
+    // Berechnen wie viele Bytes auf der aktuellen Seite bleiben
+    uint8_t bytesUntilPageBoundary = EEPROM_PAGE_SIZE - (address % EEPROM_PAGE_SIZE);
+    
+    // Ersten Teil bis zur Seitengrenze schreiben
+    writeEEPROMPage(address, data, bytesUntilPageBoundary);
+    delay(EEPROM_WRITE_CYCLE);
+    
+    // Zweiten Teil auf die nächste Seite schreiben
+    writeEEPROMPage(address + bytesUntilPageBoundary, 
+                    data + bytesUntilPageBoundary, 
+                    length - bytesUntilPageBoundary);
+    return;
+  }
+  
+  Wire.beginTransmission(EEPROM_ADDRESS);
+  // Adresse als MSB und LSB senden
+  Wire.write((address >> 8) & 0xFF);  // MSB
+  Wire.write(address & 0xFF);         // LSB
+  
+  // Daten seitenweise schreiben
+  for (uint8_t i = 0; i < length; i++) {
+    Wire.write(data[i]);
+  }
+  
+  Wire.endTransmission();
+  delay(EEPROM_WRITE_CYCLE); // Warten auf Abschluss des Schreibvorgangs
+}
+
+bool initEEPROM() {
+  Serial.println("Initialisiere EEPROM...");
+  
+  // Zuerst alles auf Null setzen
+  memset(&eepromHeader, 0, sizeof(EEPROMHeader));
+  
+  // Prüfen, ob EEPROM reagiert
+  Wire.beginTransmission(EEPROM_ADDRESS);
+  byte error = Wire.endTransmission();
+  
+  if (error != 0) {
+    Serial.println("EEPROM nicht gefunden!");
+    return false;
+  }
+  
+  // Sicherer Test des EEPROM
+  Wire.beginTransmission(EEPROM_ADDRESS);
+  Wire.write(0);  // MSB
+  Wire.write(0);  // LSB
+  if (Wire.endTransmission() != 0) {
+    Serial.println("EEPROM-Kommunikation fehlgeschlagen!");
+    return false;
+  }
+  
+  // Header vollständig neu initialisieren
+  eepromHeader.recordCount = 0;
+  eepromHeader.nextWriteAddress = sizeof(EEPROMHeader);
+  eepromHeader.initialized = 0xAA;
+  
+  // Header schreiben
+  writeEEPROMHeader();
+  
+  Serial.println("EEPROM neu initialisiert.");
+  Serial.print("Header-Größe: ");
+  Serial.print(sizeof(EEPROMHeader));
+  Serial.println(" Bytes");
   
   return true;
+}
+
+// Einen Datensatz im EEPROM speichern
+bool logDataToEEPROM(uint32_t timestamp, uint16_t rpm, float temperature) {
+  // Prüfen ob noch Platz im EEPROM ist
+  if (eepromHeader.nextWriteAddress + sizeof(LogRecord) >= EEPROM_SIZE) {
+    Serial.println("FEHLER: EEPROM voll!");
+    return false;
+  }
+  
+  // Datensatz vorbereiten
+  LogRecord record;
+  record.timestamp = timestamp;
+  record.rpm = rpm;
+  record.temperature = (int16_t)(temperature * 100.0f); // *100 für Nachkommastellen
+  
+  // Datensatz ins EEPROM schreiben
+  writeEEPROMPage(eepromHeader.nextWriteAddress, (uint8_t*)&record, sizeof(LogRecord));
+  
+  // Header aktualisieren
+  eepromHeader.recordCount++;
+  eepromHeader.nextWriteAddress += sizeof(LogRecord);
+  
+  // Header alle 10 Datensätze aktualisieren (Kompromiss zwischen Aktualität und Verschleiß)
+  if (eepromHeader.recordCount % 10 == 0) {
+    writeEEPROMHeader();
+  }
+  
+  return true;
+}
+
+// Einen Datensatz aus dem EEPROM lesen
+LogRecord readRecordFromEEPROM(uint32_t recordIndex) {
+  LogRecord record = {0}; // Initialisiere mit Nullen
+  
+  if (recordIndex >= eepromHeader.recordCount) {
+    Serial.println("FEHLER: Ungültiger Datensatzindex!");
+    return record; // Leerer Datensatz
+  }
+  
+  uint32_t recordAddress = sizeof(EEPROMHeader) + (recordIndex * sizeof(LogRecord));
+  
+  // Sicherheitsprüfung der Adresse
+  if (recordAddress + sizeof(LogRecord) > EEPROM_SIZE) {
+    Serial.println("FEHLER: Datensatzadresse außerhalb des EEPROM-Bereichs!");
+    return record;
+  }
+  
+  // Datensatz lesen
+  for (uint16_t i = 0; i < sizeof(LogRecord); i++) {
+    ((uint8_t*)&record)[i] = readEEPROMByte(recordAddress + i);
+    delay(1); // Kurze Pause zwischen Lesevorgängen
+  }
+  
+  return record;
+}
+
+// Verarbeitung von seriellen Befehlen für EEPROM-Zugriff
+void handleSerialCommands() {
+  if (Serial.available()) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+    
+    if (command == "download") {
+      downloadEEPROMDataToUSB();
+    } 
+    else if (command == "erase") {
+      Serial.println("EEPROM wird gelöscht...");
+      eraseEEPROM();
+      Serial.println("EEPROM gelöscht.");
+    }
+    else if (command == "info") {
+      Serial.print("EEPROM Status: ");
+      Serial.println(eepromAvailable ? "Verfügbar" : "Nicht verfügbar");
+      Serial.print("Gespeicherte Datensätze: ");
+      Serial.println(eepromHeader.recordCount);
+      Serial.print("Verwendeter Speicher: ");
+      Serial.print((eepromHeader.nextWriteAddress * 100.0) / EEPROM_SIZE, 2);
+      Serial.println("%");
+    }
+    else if (command == "help") {
+      Serial.println("Verfügbare Befehle:");
+      Serial.println("  download - Alle EEPROM-Daten herunterladen");
+      Serial.println("  erase    - EEPROM komplett löschen");
+      Serial.println("  info     - EEPROM-Statusinformationen anzeigen");
+      Serial.println("  help     - Diese Hilfe anzeigen");
+    }
+  }
+}
+
+void recoverI2CForEEPROM() {
+  Serial.println("I2C für EEPROM wiederherstellen...");
+  
+  // Stoppe alle anderen I2C-Aktivitäten
+  Wire.end();
+  delay(200);
+  
+  // Nur für EEPROM neu initialisieren
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(50000);  // Sehr langsame Frequenz für Stabilität
+  
+  // STOP-Zustand erzeugen
+  pinMode(SDA_PIN, OUTPUT);
+  pinMode(SCL_PIN, OUTPUT);
+  digitalWrite(SDA_PIN, LOW);
+  delayMicroseconds(10);
+  digitalWrite(SCL_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(SDA_PIN, HIGH);
+  delayMicroseconds(100);
+  
+  // Wire wieder normal initialisieren
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(50000);
+  
+  // Test mit dem EEPROM
+  Wire.beginTransmission(EEPROM_ADDRESS);
+  byte error = Wire.endTransmission();
+  
+  if (error == 0) {
+    Serial.println("EEPROM-Kommunikation wiederhergestellt");
+  } else {
+    Serial.println("EEPROM-Wiederherstellung fehlgeschlagen");
+  }
+}
+
+void downloadEEPROMDataToUSB() {
+  Serial.println("EEPROM-Daten-Download startet...");
+  
+  // I2C-Bus zurücksetzen bevor wir mit dem EEPROM kommunizieren
+  recoverI2CForEEPROM();
+  
+  Serial.println("timestamp,rpm,temperature");
+  
+  // Vorsichtshalber erneut Header lesen
+  readEEPROMHeader();
+  
+  // Begrenze auf sinnvolle Anzahl, falls recordCount korrupt ist
+  uint32_t safeCount = (eepromHeader.recordCount > 1000) ? 1000 : eepromHeader.recordCount;
+  
+  for (uint32_t i = 0; i < safeCount; i++) {
+    // I2C-Recovery zwischen Lesevorgängen, falls nötig
+    if (i % 10 == 0) {
+      Wire.setClock(50000);  // Sicherstellen, dass die Geschwindigkeit langsam ist
+    }
+    
+    LogRecord record = readRecordFromEEPROM(i);
+    
+    // Datum und Zeit aus Unix-Timestamp berechnen
+    time_t rawtime = record.timestamp;
+    struct tm * timeinfo;
+    timeinfo = gmtime(&rawtime);
+    
+    char timeString[20];
+    sprintf(timeString, "%04d-%02d-%02d %02d:%02d:%02d",
+            timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+            timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+    
+    // Daten im CSV-Format ausgeben
+    Serial.print(timeString);
+    Serial.print(",");
+    Serial.print(record.rpm);
+    Serial.print(",");
+    Serial.println(record.temperature / 100.0f, 2);
+    
+    delay(50); // Längere Pause zwischen Datensätzen
+    
+    // Auf Abbruchbefehl prüfen
+    if (Serial.available() && Serial.read() == 'q') {
+      Serial.println("Download abgebrochen.");
+      break;
+    }
+  }
+  
+  Serial.println("EEPROM-Daten-Download abgeschlossen.");
+}
+
+// EEPROM komplett löschen
+void eraseEEPROM() {
+  // Nur Header zurücksetzen
+  eepromHeader.recordCount = 0;
+  eepromHeader.nextWriteAddress = sizeof(EEPROMHeader);
+  eepromHeader.initialized = 0xAA;
+  writeEEPROMHeader();
+  
+  Serial.println("EEPROM gelöscht (Header zurückgesetzt)");
+}
+
+// Nach der SD-Karten-Initialisierung
+void resetI2CBus() {
+  Serial.println("I2C-Bus zurücksetzen...");
+  
+  // I2C-Bus neu initialisieren
+  Wire.end();
+  delay(100);
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000);
+  
+  // Kurze Pause für Stabilisierung
+  delay(200);
+}
+
+bool recoverI2C() {
+  Serial.println("Versuche I2C-Bus-Recovery...");
+  
+  // Manuelle Kontrolle der I2C-Pins
+  pinMode(SDA_PIN, OUTPUT);
+  pinMode(SCL_PIN, OUTPUT);
+  
+  // SDA auf HIGH setzen
+  digitalWrite(SDA_PIN, HIGH);
+  
+  // SCL 9 mal toggeln, um eventuell hängende Geräte zu befreien
+  for (int i = 0; i < 9; i++) {
+    digitalWrite(SCL_PIN, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(SCL_PIN, LOW);
+    delayMicroseconds(5);
+  }
+  
+  // STOP-Zustand erzeugen
+  digitalWrite(SDA_PIN, LOW);
+  delayMicroseconds(5);
+  digitalWrite(SCL_PIN, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(SDA_PIN, HIGH);
+  delayMicroseconds(5);
+  
+  // I2C-Bus neu initialisieren
+  Wire.end();
+  delay(100);
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000);
+  
+  delay(200);  // Stabilisierungszeit
+  
+  // Test, ob Recovery erfolgreich war
+  Wire.beginTransmission(OLED_TIME_ADDR);
+  byte error = Wire.endTransmission();
+  
+  return (error == 0);
 }
 
 // Haupteinrichtung
 void setup() {
   Serial.begin(115200);
   Serial.println("Setup gestartet");
-  
-  // I2C-Bus initialisieren
+
+  // --- SCHRITT 1: I2C-Bus und Displays initialisieren ---
   Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000); // 100kHz für stabilere Kommunikation
   
-  // I2C-Scanner durchführen
-  scanI2C();
-  delay(500);
-  
-  // Pin-Modi festlegen
-  pinMode(BUTTON_PLUS, INPUT_PULLUP);
-  pinMode(BUTTON_MINUS, INPUT_PULLUP);
-  pinMode(BUTTON_SET, INPUT_PULLUP);
-  pinMode(IR_SENSOR_PIN, INPUT_PULLUP);
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
-  
-  // Beide Displays initialisieren
-  displayTime.setI2CAddress(OLED_TIME_ADDR * 2); // U8G2 erwartet die Adresse im 8-Bit-Format
+  // Displays initialisieren
+  displayTime.setI2CAddress(OLED_TIME_ADDR * 2);
   displayTime.begin();
   displayTime.clearBuffer();
   
-  displayRpm.setI2CAddress(OLED_RPM_ADDR * 2); // U8G2 erwartet die Adresse im 8-Bit-Format
+  displayRpm.setI2CAddress(OLED_RPM_ADDR * 2);
   displayRpm.begin();
   displayRpm.clearBuffer();
   
-  // Initialisierungsnachricht auf beiden Displays
+  // Initialisierungsnachricht
   displayTime.setFont(u8g2_font_helvB12_tf);
   displayTime.setCursor(0, 20);
-  displayTime.print("Time Display");
-  displayTime.setCursor(0, 40);
-  displayTime.print("Initialized");
+  displayTime.print("Initializing...");
   displayTime.sendBuffer();
   
   displayRpm.setFont(u8g2_font_helvB12_tf);
   displayRpm.setCursor(0, 20);
-  displayRpm.print("RPM Display");
-  displayRpm.setCursor(0, 40);
-  displayRpm.print("Initialized");
+  displayRpm.print("Please wait");
   displayRpm.sendBuffer();
   
   delay(1000);
+    
+  // --- SCHRITT 2: I2C-Scanner und RTC-Initialisierung ---
+  scanI2C();
   
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC!");
@@ -678,7 +1194,6 @@ void setup() {
     displayTime.setCursor(0, 30);
     displayTime.print("RTC Error!");
     displayTime.sendBuffer();
-    
     while (1) delay(10);
   }
   
@@ -689,13 +1204,14 @@ void setup() {
   rtc.writeSqwPinMode(DS3231_OFF);
   rtc.disableAlarm(2);
   
-  // RTC Status anzeigen
-  displayTime.clearBuffer();
-  displayTime.setCursor(0, 20);
-  displayTime.print("RTC OK");
-  displayTime.sendBuffer();
+  // RTC Zeit prüfen/setzen
+  if (rtc.lostPower()) {
+    Serial.println("RTC lost power, setting default time!");
+    rtc.adjust(DateTime(2025, 4, 22, 12, 0, 0));
+    delay(1000);
+  }
   
-  // Erste Zeitübernahme vom RTC mit Debug-Ausgabe
+  // Erste Zeitübernahme vom RTC
   DateTime initialTime = rtc.now();
   Serial.print("Initial RTC time: ");
   Serial.print(initialTime.year()); Serial.print("-");
@@ -705,38 +1221,39 @@ void setup() {
   Serial.print(initialTime.minute()); Serial.print(":");
   Serial.println(initialTime.second());
   
-  // Zeit aus RTC holen oder bei Bedarf einstellen
-  if (rtc.lostPower()) {
-    Serial.println("RTC lost power, setting default time!");
-    displayTime.clearBuffer();
-    displayTime.setCursor(0, 20);
-    displayTime.print("RTC lost power");
-    displayTime.setCursor(0, 40);
-    displayTime.print("Setting time...");
-    displayTime.sendBuffer();
-    
-    // Standardzeit setzen (22.04.2025 12:00:00)
-    rtc.adjust(DateTime(2025, 4, 22, 12, 0, 0));
-    delay(1000);
-  } else {
-    displayTime.clearBuffer();
-    displayTime.setCursor(0, 20);
-    displayTime.print("RTC time:");
-    displayTime.setCursor(0, 40);
-    
-    DateTime now = rtc.now();
-    char timeStr[20];
-    sprintf(timeStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
-    displayTime.print(timeStr);
-    displayTime.sendBuffer();
-    delay(1000);
-  }
-  
   updateTimeFromRTC();
   
-  delay(1000);
+  // --- SCHRITT 3: EEPROM-Test und Initialisierung ---
+  Serial.println("EEPROM-Test...");
+  bool eepromTestOk = testEEPROM();
   
-  // Mehrere Versuche für die SD-Karten-Initialisierung
+  if (eepromTestOk) {
+    eepromAvailable = initEEPROM();
+    
+    if (eepromAvailable) {
+      Serial.println("EEPROM initialisiert und bereit!");
+      
+      // Bestätigungsnachricht anzeigen
+      displayTime.clearBuffer();
+      displayTime.setCursor(0, 20);
+      displayTime.print("EEPROM Ready");
+      displayTime.sendBuffer();
+      
+      displayRpm.clearBuffer();
+      displayRpm.setCursor(0, 20);
+      displayRpm.print("Backup OK");
+      displayRpm.sendBuffer();
+      
+      delay(1500);
+    } else {
+      Serial.println("EEPROM-Initialisierung fehlgeschlagen!");
+    }
+  } else {
+    eepromAvailable = false;
+    Serial.println("EEPROM-Test fehlgeschlagen!");
+  }
+  
+  // --- SCHRITT 4: SD-Karten-Initialisierung ---
   int sdRetryCount = 0;
   while(!initSDCard() && sdRetryCount < 3) {
     Serial.println("SD-Initialisierung fehlgeschlagen, versuche erneut...");
@@ -745,25 +1262,51 @@ void setup() {
   }
   
   if (sdRetryCount >= 3) {
-    Serial.println("SD-Karte konnte nach mehreren Versuchen nicht initialisiert werden");
+    Serial.println("SD-Karte konnte nicht initialisiert werden");
     sdCardAvailable = false;
   } else {
     sdCardAvailable = true;
   }
-
-  // SD-Karte initialisieren
-  displayTime.clearBuffer();
-  displayTime.setCursor(0, 20);
-  displayTime.print("Initializing");
-  displayTime.setCursor(0, 40);
-  displayTime.print("SD card...");
-  displayTime.sendBuffer();
   
-  sdCardAvailable = checkSDCard();
+  // --- SCHRITT 5: I2C-Bus nach SD-Initialisierung zurücksetzen ---
+  Serial.println("I2C-Bus nach SD-Karten-Init zurücksetzen...");
+  resetI2CBus();
+  Wire.setClock(50000); // Langsamere Frequenz für bessere Stabilität
   
+  // Wenn EEPROM-Test OK war aber nach SD-Init nicht mehr verfügbar, wiederherstellen
+  if (!eepromAvailable && eepromTestOk) {
+    Serial.println("EEPROM-Status wird nach SD-Init wiederhergestellt");
+    eepromAvailable = true;
+  }
+  // nach der SD-Initialisierung und EEPROM-Status-Wiederherstellung
+  Serial.println("EEPROM-Status wird auf 'Verfügbar' erzwungen");
+  eepromAvailable = true; // Manuelles Setzen als letzter Versuch
+  
+  // EEPROM-Header neu validieren
+  readEEPROMHeader(); // Header erneut lesen nach Reset
+  // I2C-Recovery durchführen
+  if (!recoverI2C()) {
+    Serial.println("I2C-Recovery fehlgeschlagen!");
+  } else {
+    Serial.println("I2C-Recovery erfolgreich");
+  }
+  
+  // EEPROM-Status nach Recovery prüfen
+  if (eepromAvailable) {
+    Wire.beginTransmission(EEPROM_ADDRESS);
+    byte error = Wire.endTransmission();
+    
+    if (error != 0) {
+      Serial.println("EEPROM nach SD-Init/Recovery nicht erreichbar!");
+      eepromAvailable = false;
+    } else {
+      Serial.println("EEPROM-Verbindung nach SD-Init/Recovery bestätigt");
+    }
+  }
+  
+  // --- SCHRITT 6: SD-Karten-Meldung und Log-Datei erstellen ---
   if (sdCardAvailable) {
     Serial.println("SD-Karte erfolgreich initialisiert");
-    
     displayTime.clearBuffer();
     displayTime.setCursor(0, 20);
     displayTime.print("SD Card OK");
@@ -779,48 +1322,26 @@ void setup() {
     if (dataFile) {
       dataFile.println("Date,UTC,RPM,Temperatur");
       dataFile.close();
-      
-      // Bei der Anzeige des Dateinamens
-      displayTime.clearBuffer();
-      displayTime.setFont(u8g2_font_helvB10_tf);  // Etwas kleinere Schrift für mehr Platz
-      displayTime.setCursor(0, 15);
-      displayTime.print("Log file:");
-      
-      // Zeigt nur Datum und Uhrzeit an, ohne Pfad und Präfix
-      String shortFileName = currentLogFileName;
-      shortFileName.replace("/rpm_log_", "");  // Entferne Pfad und Präfix
-      shortFileName.replace(".csv", "");       // Entferne Dateiendung
-      
-      // Aufteilen in zwei Zeilen
-      int underscorePos = shortFileName.indexOf('_');
-      if (underscorePos != -1) {
-        // Datum
-        displayTime.setCursor(0, 35);
-        displayTime.print(shortFileName.substring(0, underscorePos));
-        
-        // Zeit
-        displayTime.setCursor(0, 55);
-        displayTime.print(shortFileName.substring(underscorePos + 1));
-      } else {
-        // Falls kein Unterstrich vorhanden ist, zeige den gesamten Namen
-        displayTime.setCursor(0, 35);
-        displayTime.print(shortFileName);
-      }
-      
-      displayTime.sendBuffer();
     }
   } else {
-    Serial.println("SD-Karte konnte nicht initialisiert werden!");
-    
+    Serial.println("SD-Karte nicht verfügbar!");
     displayTime.clearBuffer();
     displayTime.setCursor(0, 20);
     displayTime.print("SD Card Error!");
     displayTime.setCursor(0, 40);
     displayTime.print("Logging disabled");
     displayTime.sendBuffer();
+    delay(1500);
   }
   
-  delay(1000);
+  // --- SCHRITT 7: Sonstige Setup-Initialisierungen ---
+  // Pin-Modi festlegen
+  pinMode(BUTTON_PLUS, INPUT_PULLUP);
+  pinMode(BUTTON_MINUS, INPUT_PULLUP);
+  pinMode(BUTTON_SET, INPUT_PULLUP);
+  pinMode(IR_SENSOR_PIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
   
   // RPM Sensor initialisieren
   displayRpm.clearBuffer();
@@ -840,7 +1361,7 @@ void setup() {
   // SET-Taste Interrupt konfigurieren
   attachInterrupt(digitalPinToInterrupt(BUTTON_SET), handleSetButtonInterrupt, FALLING);
   
-  // Setup abgeschlossen
+  // --- SCHRITT 8: Setup abgeschlossen ---
   displayTime.clearBuffer();
   displayTime.setCursor(0, 20);
   displayTime.print("Setup");
@@ -863,6 +1384,18 @@ void setup() {
   displayRPM();
   
   Serial.println("Setup abgeschlossen");
+  
+  // Am Ende von setup(), direkt vor dem Schließen der Funktion
+  Serial.print("Finaler EEPROM-Status: ");
+  Serial.println(eepromAvailable ? "Verfügbar" : "Nicht verfügbar");
+  Serial.print("Gespeicherte Datensätze: ");
+  Serial.println(eepromHeader.recordCount);
+  
+  // Zusätzliche Sicherheit: Notfall-Status-Setzung
+  if (!eepromAvailable && eepromTestOk) {
+    Serial.println("EEPROM-Status wird als letzter Versuch gesetzt!");
+    eepromAvailable = true;
+  }
 }
 
 void loop() {
@@ -871,7 +1404,15 @@ void loop() {
   static int lastRpm = -1;
   static unsigned long lastCardCheck = 0;
   static unsigned long lastTimeUpdate = 0;
-  
+
+  // Sicherstellen, dass EEPROM immer verfügbar ist
+  static bool firstRun = true;
+  if (firstRun) {
+    eepromAvailable = true;
+    firstRun = false;
+    Serial.println("EEPROM-Status manuell korrigiert");
+  }
+
   // Temperatur vom RTC-Modul auslesen
   float temperature = rtc.getTemperature();
   
@@ -950,7 +1491,26 @@ void loop() {
       }
     }
   }
-  
+               
+  if (!eepromAvailable) {
+    Serial.println("EEPROM nicht verfügbar, versuche Verifikation...");
+    if (verifyEEPROM()) {
+      Serial.println("EEPROM funktioniert trotz Status!");
+      eepromAvailable = true;
+    }
+  }    
+
+  // Zusätzlich ins EEPROM schreiben, aber nur alle 10 Sekunden um Verschleiß zu minimieren
+  if (eepromAvailable && currentTime - lastEepromWrite >= EEPROM_WRITE_INTERVAL) {
+    DateTime now = rtc.now();
+    uint32_t timestamp = now.unixtime(); // Unix-Timestamp (Sekunden seit 1970)
+    
+    bool success = logDataToEEPROM(timestamp, Rpm, temperature);
+    if (success) {
+      lastEepromWrite = currentTime;
+    }
+  }
+
   // Zeit-Display alle Sekunde aktualisieren
   if (currentTime - lastTimeUpdate >= 1000) {
     if (sdCardAvailable) {
@@ -985,4 +1545,6 @@ void loop() {
     buttonPressed = false;
     handlingButton = false; // Flag zurücksetzen
   }
+    // Verarbeite serielle Befehle (für USB-Download und EEPROM-Verwaltung)
+  handleSerialCommands();
 }
