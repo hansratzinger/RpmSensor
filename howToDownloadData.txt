@@ -1,0 +1,48 @@
+# EEPROM auslesen: Anleitung
+
+Das EEPROM in Ihrem ESP32-Projekt kann einfach über den seriellen Monitor ausgelesen werden. Der Code enthält bereits alle nötigen Funktionen dafür.
+
+## Mit seriellen Befehlen auslesen
+
+1. **ESP32 mit dem Computer verbinden**
+2. **Seriellen Monitor öffnen** (115200 Baud)
+3. **Folgende Befehle eingeben:**
+
+   - `download` - Lädt alle EEPROM-Daten als CSV-Format herunter (Zeitstempel, RPM, Temperatur)
+   - `info` - Zeigt Statusinformationen des EEPROM (Anzahl Records, Speichernutzung)
+   - `erase` - Löscht alle Daten im EEPROM
+   - `help` - Zeigt alle verfügbaren Befehle
+
+## Beispiel eines Auslesevorgangs:
+
+```
+> download
+EEPROM-Daten-Download startet...
+I2C-Bus vollständig zurücksetzen für EEPROM-Download...
+EEPROM ist jetzt erreichbar!
+timestamp,rpm,temperature
+Gelesene Datensatzanzahl: 42
+Lese Datensatz 0 von 42
+2025-04-24 14:08:13,560,24.75
+2025-04-24 14:08:23,580,24.75
+2025-04-24 14:08:33,260,25.00
+2025-04-24 14:08:43,300,25.00
+...
+EEPROM-Daten-Download abgeschlossen.
+```
+
+## Technische Details
+
+Der Download-Prozess:
+1. Schaltet temporär die Displays aus
+2. Setzt den I2C-Bus zurück und optimiert ihn für EEPROM-Zugriff
+3. Liest den Header mit der Anzahl der gespeicherten Datensätze
+4. Liest jeden Datensatz einzeln aus
+5. Formatiert die Daten als CSV und sendet sie über die serielle Schnittstelle
+6. Stellt den normalen Betriebszustand wieder her
+
+Bei Problemen mit dem I2C-Bus führt der Code automatisch verschiedene Recovery-Strategien durch.
+
+Dieses Feature ermöglicht es Ihnen, die Daten für weitere Analysen zu speichern oder in anderen Tools zu visualisieren.
+
+HR 2025-06-08 NK 

@@ -70,18 +70,24 @@ String currentLogFileName;
 #define EEPROM_PAGE_SIZE 128   // 128 Byte Seite laut Datenblatt
 #define EEPROM_WRITE_CYCLE 5   // 5ms Schreibzyklus
 
-// Stelle sicher, dass die struct korrekt ausgerichtet ist
-struct __attribute__((packed)) EEPROMHeader {
-  uint32_t recordCount;        // Anzahl der gespeicherten Datensätze
-  uint32_t nextWriteAddress;   // Nächste freie Adresse zum Schreiben
-  uint8_t initialized;         // Flag ob EEPROM initialisiert wurde
-};
 
-// Stelle sicher, dass die struct korrekt ausgerichtet ist
 struct __attribute__((packed)) LogRecord {
   uint32_t timestamp;          // UNIX-Timestamp
   uint16_t rpm;                // RPM-Wert
   int16_t temperature;         // Temperatur * 100
+};
+
+// Puffer für temporäre Daten (60 Datensätze für 1 Minute)
+#define BUFFER_SIZE 60
+LogRecord dataBuffer[BUFFER_SIZE];
+uint8_t bufferCount = 0;
+unsigned long lastMinuteWrite = 0;
+const unsigned long MINUTE_INTERVAL = 60000; // 60 Sekunden in Millisekunden
+
+struct __attribute__((packed)) EEPROMHeader {
+  uint32_t recordCount;        // Anzahl der gespeicherten Datensätze
+  uint32_t nextWriteAddress;   // Nächste freie Adresse zum Schreiben
+  uint8_t initialized;         // Flag ob EEPROM initialisiert wurde
 };
 
 // EEPROM-Verwaltungsvariablen
@@ -129,6 +135,7 @@ unsigned long lastTime;           // Variable für die letzte Zeitmessung
 unsigned long lastOutputTime = 0; // Zeitpunkt der letzten Ausgabe
 unsigned long lastSecondRpmCount = 0; // Zeitpunkt der letzten Sekundenmessung
 
+bool writeBufferedDataToEEPROM();
 void setupRTC(); // Funktion zur Einrichtung des RTC
 void setupSDCard(); // Funktion zur Einrichtung der SD-Karte
 void setupDisplay(); // Funktion zur Einrichtung der Displays
@@ -1009,10 +1016,10 @@ void downloadEEPROMDataToUSB() {
   for (uint32_t i = 0; i < recordCount; i++) {
     // Langsamer fortschreiten und Pausen einlegen
     if (i % 5 == 0) {
-      Serial.print("Lese Datensatz ");
-      Serial.print(i);
-      Serial.print(" von ");
-      Serial.println(recordCount);
+      // Serial.print("Lese Datensatz ");
+      // Serial.print(i);
+      // Serial.print(" von ");
+      // Serial.println(recordCount);
       delay(100);  // Längere Pause alle 5 Datensätze
     }
     
@@ -1108,8 +1115,8 @@ void downloadEEPROMDataToUSB() {
   // I2C-Bus für normale Operationen wiederherstellen
   Wire1.end();
   delay(100);
-  Wire1.begin(SDA_PIN, SCL_PIN);
-  Wire1.setClock(100000);  // Standard 100 kHz zurücksetzen
+  Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);  // Korrigiert: EEPROM-Pins verwenden
+  Wire1.setClock(100000);
   delay(100);
   
   // Displays wieder aktivieren
@@ -1131,7 +1138,7 @@ void writeEEPROMPage(uint32_t address, const uint8_t* data, uint8_t length) {
   
   // Sicherstellen, dass wir nicht über eine Seitengrenze schreiben
   if ((address / EEPROM_PAGE_SIZE) != ((address + length - 1) / EEPROM_PAGE_SIZE)) {
-    Serial.println("WARNUNG: Schreibvorgang überschreitet Seitengrenze, aufteilen...");
+    // Serial.println("WARNUNG: Schreibvorgang überschreitet Seitengrenze, aufteilen...");
     
     // Berechnen wie viele Bytes auf der aktuellen Seite bleiben
     uint8_t bytesUntilPageBoundary = EEPROM_PAGE_SIZE - (address % EEPROM_PAGE_SIZE);
@@ -1165,10 +1172,10 @@ bool initEEPROM() {
   Serial.println("Initialisiere EEPROM...");
   
   // Explizit I2C für EEPROM optimieren
-  Wire.end();
+  Wire1.end();
   delay(200);
-  Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(50000); // Niedrigere Geschwindigkeit für bessere Stabilität
+  Wire1.begin(SDA_PIN, SCL_PIN);
+  Wire1.setClock(50000); // Niedrigere Geschwindigkeit für bessere Stabilität
   
   // EEPROM-Adresse aggressiv testen
   Serial.print("Teste EEPROM bei verschiedenen Adressen...");
@@ -1262,12 +1269,8 @@ bool logDataToEEPROM(uint32_t timestamp, uint16_t rpm, float temperature) {
   // Header aktualisieren
   eepromHeader.recordCount++;
   eepromHeader.nextWriteAddress += sizeof(LogRecord);
-  
-  // Header alle 10 Datensätze aktualisieren (Kompromiss zwischen Aktualität und Verschleiß)
-  if (eepromHeader.recordCount % 10 == 0) {
-    writeEEPROMHeader();
-  }
-  
+  writeEEPROMHeader();
+ 
   return true;
 }
 
@@ -2084,6 +2087,11 @@ void setup() {
   pinMode(IR_SENSOR_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
+ 
+  // Puffer initialisieren
+  memset(dataBuffer, 0, sizeof(dataBuffer));
+  bufferCount = 0;
+  lastMinuteWrite = millis();
   
   // RPM Sensor initialisieren
   displayRpm.clearBuffer();
@@ -2232,6 +2240,17 @@ void loop() {
         sdCardAvailable = false; // Fehler beim Schreiben, Status aktualisieren
       }
     }
+    
+    // NEU: Daten im Puffer für EEPROM-Schreibvorgang speichern
+    if (eepromAvailable && bufferCount < BUFFER_SIZE) {
+      DateTime now = rtc.now();
+      uint32_t timestamp = now.unixtime();
+      
+      dataBuffer[bufferCount].timestamp = timestamp;
+      dataBuffer[bufferCount].rpm = Rpm;
+      dataBuffer[bufferCount].temperature = (int16_t)(temperature * 100.0f);
+      bufferCount++;
+    }
   }
                
   if (!eepromAvailable) {
@@ -2242,14 +2261,19 @@ void loop() {
     }
   }    
 
-  // Zusätzlich ins EEPROM schreiben, aber nur alle 10 Sekunden um Verschleiß zu minimieren
-  if (eepromAvailable && currentTime - lastEepromWrite >= EEPROM_WRITE_INTERVAL) {
-    DateTime now = rtc.now();
-    uint32_t timestamp = now.unixtime(); // Unix-Timestamp (Sekunden seit 1970)
+  // NEU: Gepufferte Daten alle 60 Sekunden ins EEPROM schreiben
+  if (eepromAvailable && currentTime - lastMinuteWrite >= MINUTE_INTERVAL && bufferCount > 0) {
+    Serial.print("Schreibe ");
+    Serial.print(bufferCount);
+    Serial.println(" gepufferte Datensätze ins EEPROM...");
     
-    bool success = logDataToEEPROM(timestamp, Rpm, temperature);
+    bool success = writeBufferedDataToEEPROM();
     if (success) {
-      lastEepromWrite = currentTime;
+      Serial.println("Gepufferte Daten erfolgreich geschrieben");
+      bufferCount = 0;  // Puffer zurücksetzen
+      lastMinuteWrite = currentTime;
+    } else {
+      Serial.println("Fehler beim Schreiben der gepufferten Daten!");
     }
   }
 
@@ -2289,4 +2313,29 @@ void loop() {
   }
     // Verarbeite serielle Befehle (für USB-Download und EEPROM-Verwaltung)
   handleSerialCommands();
+}
+
+// NEU: Funktion zum Schreiben des gesamten Puffers
+bool writeBufferedDataToEEPROM() {
+  for (uint8_t i = 0; i < bufferCount; i++) {
+    uint32_t address = eepromHeader.nextWriteAddress;
+    
+    // Prüfen ob noch Platz im EEPROM ist
+    if (address + sizeof(LogRecord) >= EEPROM_SIZE) {
+      Serial.println("FEHLER: EEPROM voll!");
+      return false;
+    }
+    
+    // Datensatz schreiben
+    writeEEPROMPage(address, (uint8_t*)&dataBuffer[i], sizeof(LogRecord));
+    delay(EEPROM_WRITE_CYCLE);
+    
+    // Header-Zähler aktualisieren
+    eepromHeader.recordCount++;
+    eepromHeader.nextWriteAddress += sizeof(LogRecord);
+  }
+  
+  // Header am Ende nur einmal schreiben
+  writeEEPROMHeader();
+  return true;
 }
