@@ -47,7 +47,7 @@
 #define SCL_PIN_EEPROM 17
 
 // TwoWire-Instanz für den EEPROM-Bus erstellen
-TwoWire Wire1 = TwoWire(1); // Verwende I2C Controller 1
+// TwoWire Wire1 = TwoWire(1); // Verwende I2C Controller 1
 
 // OLED Display Adressen
 #define OLED_TIME_ADDR 0x3C // Erstes Display für Zeit/Datum
@@ -653,9 +653,24 @@ bool initSDCard() {
   Serial.print(cardSize);
   Serial.println(" MB");
 
-  // Explizit dem System mitteilen, dass wir mit SPI fertig sind
-  SPI.endTransaction();
-  delay(100);
+// SPI explizit beenden
+SPI.endTransaction();
+delay(200);  // Mehr Zeit für Stabilisierung
+
+// I2C-Busse neu initialisieren (getrennt)
+Wire.end();  // Hauptbus beenden
+Wire1.end(); // EEPROM-Bus beenden
+delay(200);  
+
+// Erst EEPROM-Bus wieder starten
+Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
+Wire1.setClock(50000); // Niedrigere Frequenz
+delay(100);
+
+// Dann Hauptbus wieder starten
+Wire.begin(SDA_PIN, SCL_PIN);
+Wire.setClock(100000);
+delay(100);
 
   return true;
 }
@@ -664,17 +679,17 @@ bool testEEPROM() {
   Serial.println("EEPROM-Debug-Test startet...");
   
   // EEPROM-Kommunikation ohne Header-Strukturen testen
-  Wire.beginTransmission(EEPROM_ADDRESS);
-  Wire.write(0);    // Adresse MSB
-  Wire.write(0);    // Adresse LSB
-  byte result = Wire.endTransmission();
+  Wire1.beginTransmission(EEPROM_ADDRESS);
+  Wire1.write(0);    // Adresse MSB
+  Wire1.write(0);    // Adresse LSB
+  byte result = Wire1.endTransmission();
   
   Serial.print("EEPROM-Transmissions-Ergebnis: ");
   Serial.println(result);
   
-  Wire.requestFrom(EEPROM_ADDRESS, 1);
-  if (Wire.available()) {
-    byte value = Wire.read();
+  Wire1.requestFrom(EEPROM_ADDRESS, 1);
+  if (Wire1.available()) {
+    byte value = Wire1.read();
     Serial.print("Gelesener Byte-Wert: 0x");
     Serial.println(value, HEX);
   } else {
@@ -683,11 +698,11 @@ bool testEEPROM() {
   }
   
   // Nur der einfache Test, keine Initialisierung hier
-  Wire.beginTransmission(EEPROM_ADDRESS);
-  Wire.write(0);    // Adresse MSB
-  Wire.write(0);    // Adresse LSB
-  Wire.write(0xAA); // Testdaten
-  if (Wire.endTransmission() != 0) {
+  Wire1.beginTransmission(EEPROM_ADDRESS);
+  Wire1.write(0);    // Adresse MSB
+  Wire1.write(0);    // Adresse LSB
+  Wire1.write(0xAA); // Testdaten
+  if (Wire1.endTransmission() != 0) {
     Serial.println("Fehler beim Schreiben");
     return false;
   }
@@ -696,18 +711,18 @@ bool testEEPROM() {
   delay(10);
   
   // Setze Leseadresse
-  Wire.beginTransmission(EEPROM_ADDRESS);
-  Wire.write(0);    // Adresse MSB
-  Wire.write(0);    // Adresse LSB
-  if (Wire.endTransmission() != 0) {
+  Wire1.beginTransmission(EEPROM_ADDRESS);
+  Wire1.write(0);    // Adresse MSB
+  Wire1.write(0);    // Adresse LSB
+  if (Wire1.endTransmission() != 0) {
     Serial.println("Fehler beim Setzen der Leseadresse");
     return false;
   }
   
   // Lese Daten
-  Wire.requestFrom(EEPROM_ADDRESS, 1);
-  if (Wire.available()) {
-    byte data = Wire.read();
+  Wire1.requestFrom(EEPROM_ADDRESS, 1);
+  if (Wire1.available()) {
+    byte data = Wire1.read();
     Serial.print("Gelesene Daten: 0x");
     Serial.println(data, HEX);
     return (data == 0xAA);
@@ -787,34 +802,34 @@ uint8_t readEEPROMByte(uint32_t address) {
   
   uint8_t retries = 5;  // Mehr Wiederholungsversuche
   while (retries > 0) {
-    Wire.beginTransmission(EEPROM_ADDRESS);
-    Wire.write((address >> 8) & 0xFF);  // MSB
-    Wire.write(address & 0xFF);         // LSB
-    if (Wire.endTransmission() != 0) {
+    Wire1.beginTransmission(EEPROM_ADDRESS);
+    Wire1.write((address >> 8) & 0xFF);  // MSB
+    Wire1.write(address & 0xFF);         // LSB
+    if (Wire1.endTransmission() != 0) {
       Serial.println("EEPROM-Lesefehler, wiederhole...");
       retries--;
       delay(20);  // Längere Pause
       
       if (retries == 2) {
         // Bei fast erschöpften Versuchen I2C zurücksetzen
-        Wire.end();
+        Wire1.end();
         delay(50);
-        Wire.begin(SDA_PIN, SCL_PIN);
-        Wire.setClock(25000);  // Noch langsamere Frequenz probieren
+        Wire1.begin(SDA_PIN, SCL_PIN);
+        Wire1.setClock(25000);  // Noch langsamere Frequenz probieren
       }
       
       continue;
     }
     
-    if (Wire.requestFrom(EEPROM_ADDRESS, 1) != 1) {
+    if (Wire1.requestFrom(EEPROM_ADDRESS, 1) != 1) {
       Serial.println("EEPROM-Lesefehler, wiederhole...");
       retries--;
       delay(20);
       continue;
     }
     
-    if (Wire.available()) {
-      return Wire.read();
+    if (Wire1.available()) {
+      return Wire1.read();
     }
     
     retries--;
@@ -831,12 +846,12 @@ void writeEEPROMByte(uint32_t address, uint8_t data) {
     return;
   }
   
-  Wire.beginTransmission(EEPROM_ADDRESS);
+  Wire1.beginTransmission(EEPROM_ADDRESS);
   // Adresse als MSB und LSB senden
-  Wire.write((address >> 8) & 0xFF);  // MSB
-  Wire.write(address & 0xFF);         // LSB
-  Wire.write(data);
-  Wire.endTransmission();
+  Wire1.write((address >> 8) & 0xFF);  // MSB
+  Wire1.write(address & 0xFF);         // LSB
+  Wire1.write(data);
+  Wire1.endTransmission();
   
   delay(5); // Zeit zum Schreiben
 }
@@ -845,50 +860,50 @@ bool recoveryI2CForEEPROMDownload() {
   Serial.println("I2C-Bus vollständig zurücksetzen für EEPROM-Download...");
   
   // Alle I2C-Geräte deaktivieren
-  Wire.end();
+  Wire1.end();  // EEPROM-Bus beenden statt Wire
   delay(200);
   
   // Manuelle I2C-Bus-Reset-Prozedur
-  pinMode(SDA_PIN, OUTPUT);
-  pinMode(SCL_PIN, OUTPUT);
+  pinMode(SDA_PIN_EEPROM, OUTPUT);  // EEPROM-Pins verwenden
+  pinMode(SCL_PIN_EEPROM, OUTPUT);  // EEPROM-Pins verwenden
   
   // Pins auf HIGH setzen (idle Zustand)
-  digitalWrite(SDA_PIN, HIGH);
-  digitalWrite(SCL_PIN, HIGH);
+  digitalWrite(SDA_PIN_EEPROM, HIGH);
+  digitalWrite(SCL_PIN_EEPROM, HIGH);
   delay(50);
   
   // START-Bedingung simulieren
-  digitalWrite(SDA_PIN, LOW);
+  digitalWrite(SDA_PIN_EEPROM, LOW);
   delayMicroseconds(10);
-  digitalWrite(SCL_PIN, LOW);
+  digitalWrite(SCL_PIN_EEPROM, LOW);
   delayMicroseconds(10);
   
-  // 9 Taktzyklen (für potentiell 9 Bits) senden, um alle hängenden Übertragungen abzuschließen
+  // 9 Taktzyklen (für potentiell 9 Bits) senden
   for (int i = 0; i < 9; i++) {
-    digitalWrite(SCL_PIN, HIGH);
+    digitalWrite(SCL_PIN_EEPROM, HIGH);
     delayMicroseconds(10);
-    digitalWrite(SCL_PIN, LOW);
+    digitalWrite(SCL_PIN_EEPROM, LOW);
     delayMicroseconds(10);
   }
   
   // STOP-Bedingung generieren
-  digitalWrite(SCL_PIN, LOW);
+  digitalWrite(SCL_PIN_EEPROM, LOW);
   delayMicroseconds(10);
-  digitalWrite(SDA_PIN, LOW);
+  digitalWrite(SDA_PIN_EEPROM, LOW);
   delayMicroseconds(10);
-  digitalWrite(SCL_PIN, HIGH);
+  digitalWrite(SCL_PIN_EEPROM, HIGH);
   delayMicroseconds(10);
-  digitalWrite(SDA_PIN, HIGH);
+  digitalWrite(SDA_PIN_EEPROM, HIGH);
   delay(50);  // Längere Pause nach STOP
   
-  // I2C-Bus neu initialisieren mit sehr niedriger Frequenz nur für EEPROM
-  Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(10000);  // 10 kHz für stabile EEPROM-Kommunikation
+  // I2C-Bus neu initialisieren mit sehr niedriger Frequenz
+  Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
+  Wire1.setClock(10000);  // 10 kHz für stabile Kommunikation
   delay(100);
   
   // Test, ob EEPROM erreichbar ist
-  Wire.beginTransmission(EEPROM_ADDRESS);
-  byte error = Wire.endTransmission();
+  Wire1.beginTransmission(EEPROM_ADDRESS);
+  byte error = Wire1.endTransmission();
   
   if (error == 0) {
     Serial.println("EEPROM ist jetzt erreichbar!");
@@ -896,11 +911,11 @@ bool recoveryI2CForEEPROMDownload() {
   }
   
   // Zweiter Versuch mit noch niedrigerer Frequenz
-  Wire.setClock(5000);  // 5 kHz
+  Wire1.setClock(5000);  // 5 kHz
   delay(50);
   
-  Wire.beginTransmission(EEPROM_ADDRESS);
-  error = Wire.endTransmission();
+  Wire1.beginTransmission(EEPROM_ADDRESS);
+  error = Wire1.endTransmission();
   
   return (error == 0);
 }
@@ -919,20 +934,20 @@ void downloadEEPROMDataToUSB() {
     Serial.println("EEPROM-Wiederherstellung fehlgeschlagen!");
     
     // Versuch mit extrem aggressivem Reset
-    Wire.end();
+    Wire1.end();
     delay(500);
     
     pinMode(SDA_PIN, INPUT_PULLUP);  // Sicherstellen, dass Pullups aktiv sind
     pinMode(SCL_PIN, INPUT_PULLUP);
     delay(100);
     
-    Wire.begin(SDA_PIN, SCL_PIN);
-    Wire.setClock(1000);  // Extrem langsame 1 kHz
+    Wire1.begin(SDA_PIN, SCL_PIN);
+    Wire1.setClock(1000);  // Extrem langsame 1 kHz
     delay(200);
     
     // Letzter Versuch
-    Wire.beginTransmission(EEPROM_ADDRESS);
-    byte error = Wire.endTransmission();
+    Wire1.beginTransmission(EEPROM_ADDRESS);
+    byte error = Wire1.endTransmission();
     
     if (error != 0) {
       Serial.println("EEPROM ist nicht erreichbar - Download nicht möglich.");
@@ -957,24 +972,24 @@ void downloadEEPROMDataToUSB() {
   uint32_t recordCount = 0;
   
   for (uint8_t i = 0; i < 4; i++) {
-    Wire.beginTransmission(EEPROM_ADDRESS);
-    Wire.write(0);  // MSB (Adresse 0)
-    Wire.write(i);  // LSB (Bytes 0-3)
+    Wire1.beginTransmission(EEPROM_ADDRESS);
+    Wire1.write(0);  // MSB (Adresse 0)
+    Wire1.write(i);  // LSB (Bytes 0-3)
     
-    if (Wire.endTransmission() != 0) {
+    if (Wire1.endTransmission() != 0) {
       Serial.println("Fehler beim Setzen der Leseadresse");
       continue;
     }
     
     delay(5);
     
-    if (Wire.requestFrom(EEPROM_ADDRESS, 1) != 1) {
+    if (Wire1.requestFrom(EEPROM_ADDRESS, 1) != 1) {
       Serial.println("Fehler beim Lesen des EEPROM-Headers");
       continue;
     }
     
-    if (Wire.available()) {
-      byte value = Wire.read();
+    if (Wire1.available()) {
+      byte value = Wire1.read();
       recordCount |= ((uint32_t)value << (i * 8));
     }
     
@@ -1013,11 +1028,11 @@ void downloadEEPROMDataToUSB() {
       uint32_t byteAddress = recordAddress + byteIdx;
       
       // Adresse setzen
-      Wire.beginTransmission(EEPROM_ADDRESS);
-      Wire.write((byteAddress >> 8) & 0xFF);  // MSB
-      Wire.write(byteAddress & 0xFF);         // LSB
+      Wire1.beginTransmission(EEPROM_ADDRESS);
+      Wire1.write((byteAddress >> 8) & 0xFF);  // MSB
+      Wire1.write(byteAddress & 0xFF);         // LSB
       
-      if (Wire.endTransmission() != 0) {
+      if (Wire1.endTransmission() != 0) {
         Serial.print("Fehler beim Setzen der Adresse für Byte ");
         Serial.println(byteIdx);
         readSuccess = false;
@@ -1027,15 +1042,15 @@ void downloadEEPROMDataToUSB() {
       delay(2);  // Kurze Pause zwischen Operationen
       
       // Byte lesen
-      if (Wire.requestFrom(EEPROM_ADDRESS, 1) != 1) {
+      if (Wire1.requestFrom(EEPROM_ADDRESS, 1) != 1) {
         Serial.print("Fehler beim Lesen von Byte ");
         Serial.println(byteIdx);
         readSuccess = false;
         break;
       }
       
-      if (Wire.available()) {
-        ((uint8_t*)&record)[byteIdx] = Wire.read();
+      if (Wire1.available()) {
+        ((uint8_t*)&record)[byteIdx] = Wire1.read();
       } else {
         readSuccess = false;
         break;
@@ -1049,10 +1064,10 @@ void downloadEEPROMDataToUSB() {
       Serial.println(i);
       
       // I2C-Bus zurücksetzen und erneut versuchen
-      Wire.end();
+      Wire1.end();
       delay(50);
-      Wire.begin(SDA_PIN, SCL_PIN);
-      Wire.setClock(5000);
+      Wire1.begin(SDA_PIN, SCL_PIN);
+      Wire1.setClock(5000);
       delay(100);
       
       continue;  // Nächsten Datensatz versuchen
@@ -1091,10 +1106,10 @@ void downloadEEPROMDataToUSB() {
   Serial.println("EEPROM-Daten-Download abgeschlossen.");
   
   // I2C-Bus für normale Operationen wiederherstellen
-  Wire.end();
+  Wire1.end();
   delay(100);
-  Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(100000);  // Standard 100 kHz zurücksetzen
+  Wire1.begin(SDA_PIN, SCL_PIN);
+  Wire1.setClock(100000);  // Standard 100 kHz zurücksetzen
   delay(100);
   
   // Displays wieder aktivieren
@@ -1132,17 +1147,17 @@ void writeEEPROMPage(uint32_t address, const uint8_t* data, uint8_t length) {
     return;
   }
   
-  Wire.beginTransmission(EEPROM_ADDRESS);
+  Wire1.beginTransmission(EEPROM_ADDRESS);
   // Adresse als MSB und LSB senden
-  Wire.write((address >> 8) & 0xFF);  // MSB
-  Wire.write(address & 0xFF);         // LSB
+  Wire1.write((address >> 8) & 0xFF);  // MSB
+  Wire1.write(address & 0xFF);         // LSB
   
   // Daten seitenweise schreiben
   for (uint8_t i = 0; i < length; i++) {
-    Wire.write(data[i]);
+    Wire1.write(data[i]);
   }
   
-  Wire.endTransmission();
+  Wire1.endTransmission();
   delay(EEPROM_WRITE_CYCLE); // Warten auf Abschluss des Schreibvorgangs
 }
 
@@ -1341,117 +1356,412 @@ void resetI2CBus() {
 }
 
 bool recoverI2C() {
-  Serial.println("Versuche verbesserte I2C-Bus-Recovery...");
+  Serial.println("Verbesserte I2C-Bus-Recovery...");
   
   // Erst alle I2C-Aktivitäten stoppen
   Wire.end();
+  Wire1.end();
   delay(300);
   
-  // Manuelle Kontrolle der I2C-Pins mit längeren Pulsen
-  pinMode(SDA_PIN, OUTPUT);
-  pinMode(SCL_PIN, OUTPUT);
-  
-  
-  // SDA und SCL auf HIGH setzen (idle Zustand)
-  digitalWrite(SDA_PIN, HIGH);
-  digitalWrite(SCL_PIN, HIGH);
+  // Manuelle Kontrolle der I2C-Pins - zuerst als INPUT konfigurieren
+  pinMode(SDA_PIN, INPUT_PULLUP);
+  pinMode(SCL_PIN, INPUT_PULLUP);
   delay(100);
   
-  // SCL 16 mal toggeln, um hängende Geräte zu befreien
-  // Längere Timing-Werte für bessere Stabilität
+  pinMode(SDA_PIN_EEPROM, INPUT_PULLUP);
+  pinMode(SCL_PIN_EEPROM, INPUT_PULLUP);
+  delay(100);
+  
+  // Jetzt erst als OUTPUT konfigurieren
+  pinMode(SDA_PIN, OUTPUT);
+  pinMode(SCL_PIN, OUTPUT);
+  pinMode(SDA_PIN_EEPROM, OUTPUT);
+  pinMode(SCL_PIN_EEPROM, OUTPUT);
+  
+  // SCL-Cycling zuerst für Bus 1
+  digitalWrite(SDA_PIN_EEPROM, HIGH);
+  digitalWrite(SCL_PIN_EEPROM, HIGH);
+  delay(100);
+  
   for (int i = 0; i < 16; i++) {
-    digitalWrite(SCL_PIN, HIGH);
-    delay(1);  // 1ms statt 5µs
-    digitalWrite(SCL_PIN, LOW);
-    delay(1);
-    digitalWrite(SCL_PIN, HIGH);
-    delay(1);
+    digitalWrite(SCL_PIN_EEPROM, LOW);
+    delay(5);
+    digitalWrite(SCL_PIN_EEPROM, HIGH);
+    delay(5);
   }
   
-  // STOP-Bedingung explizit erzeugen
-  digitalWrite(SDA_PIN, LOW);
-  delay(1);
-  digitalWrite(SCL_PIN, HIGH);
-  delay(1);
-  digitalWrite(SDA_PIN, HIGH);
-  delay(10);
+  // STOP-Bedingung
+  digitalWrite(SDA_PIN_EEPROM, LOW);
+  delay(5);
+  digitalWrite(SCL_PIN_EEPROM, HIGH);
+  delay(5);
+  digitalWrite(SDA_PIN_EEPROM, HIGH);
+  delay(20);
   
-  // I2C-Bus neu initialisieren mit niedriger Frequenz
+  // Beide Busse neu initialisieren
+  Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
+  Wire1.setClock(10000);  // 10kHz
+  delay(100);
+  
   Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(10000);  // Sehr niedriger Takt (10 kHz)
-  delay(200);
+  Wire.setClock(100000);  // 100kHz
+  delay(100);
   
-  // Teste sowohl OLED als auch EEPROM
-  bool oledOk = false;
-  bool eepromOk = false;
-  
-  // Test für OLED
-  Wire.beginTransmission(OLED_TIME_ADDR);
-  byte error = Wire.endTransmission();
-  oledOk = (error == 0);
-  
-  // Test für EEPROM mit mehreren Versuchen
-  for (int attempt = 0; attempt < 3; attempt++) {
-    Wire.beginTransmission(EEPROM_ADDRESS);
-    error = Wire.endTransmission();
-    if (error == 0) {
-      eepromOk = true;
-      break;
-    }
-    delay(50);
-    Wire.setClock(5000 - (attempt * 1000)); // Progressiv langsamerer Takt
-  }
-  
-  // Wenn EEPROM nicht erreichbar, versuche aggressivere Recovery
-  if (!eepromOk) {
-    Serial.println("Aggressiver I2C-Reset für EEPROM...");
-    
-    // Noch längere Impulse für bessere Signalqualität
-    for (int i = 0; i < 32; i++) {
-      digitalWrite(SCL_PIN, HIGH);
-      delay(5);
-      digitalWrite(SCL_PIN, LOW);
-      delay(5);
-    }
-    
-    // Explizite START und STOP Sequenz
-    digitalWrite(SDA_PIN, HIGH);
-    delay(5);
-    digitalWrite(SCL_PIN, HIGH);
-    delay(5);
-    digitalWrite(SDA_PIN, LOW);
-    delay(5);
-    digitalWrite(SCL_PIN, LOW);
-    delay(5);
-    digitalWrite(SCL_PIN, HIGH);
-    delay(5);
-    digitalWrite(SDA_PIN, HIGH);
-    delay(10);
-    
-    // Neuinitialisierung mit extrem niedrigem Takt
-    Wire.begin(SDA_PIN, SCL_PIN);
-    Wire.setClock(1000);  // 1 kHz - extrem langsam
-    delay(300);
-    
-    // Erneuter Test
-    Wire.beginTransmission(EEPROM_ADDRESS);
-    error = Wire.endTransmission();
-    eepromOk = (error == 0);
-  }
-  
-  // Status ausgeben
-  Serial.print("Recovery-Ergebnis: OLED ");
-  Serial.print(oledOk ? "OK" : "FEHLER");
-  Serial.print(", EEPROM ");
-  Serial.println(eepromOk ? "OK" : "FEHLER");
-  
-  // Takt wieder auf normalen Wert setzen für andere Geräte
-  Wire.setClock(100000);
-  
-  return (oledOk && eepromOk);
+  return true;
 }
 
-// Haupteinrichtung
+// I2C-Scanner für Debugging
+
+// Neue Funktionen für erweiterte I2C-Tests hinzufügen
+bool testEEPROMAtAddress(TwoWire &wirePort, byte address, uint16_t testLocation, byte testValue) {
+  Serial.print("Test EEPROM bei Adresse 0x");
+  Serial.print(address, HEX);
+  Serial.print(" mit Wert 0x");
+  Serial.print(testValue, HEX);
+  Serial.print(" an Position 0x");
+  Serial.print(testLocation, HEX);
+  Serial.println("...");
+  
+  // Schreibvorgang
+  wirePort.beginTransmission(address);
+  wirePort.write((testLocation >> 8) & 0xFF);  // MSB
+  wirePort.write(testLocation & 0xFF);         // LSB
+  wirePort.write(testValue);                   // Testwert
+  byte writeResult = wirePort.endTransmission();
+  
+  Serial.print("  Schreibergebnis: ");
+  Serial.print(writeResult);
+  Serial.println(writeResult == 0 ? " (OK)" : " (FEHLER)");
+  
+  if (writeResult != 0) return false;
+  
+  delay(10); // EEPROM-Schreibzyklus abwarten
+  
+  // Lesevorgang
+  wirePort.beginTransmission(address);
+  wirePort.write((testLocation >> 8) & 0xFF);  // MSB
+  wirePort.write(testLocation & 0xFF);         // LSB
+  byte setAddrResult = wirePort.endTransmission();
+  
+  Serial.print("  Leseadresse setzen: ");
+  Serial.print(setAddrResult);
+  Serial.println(setAddrResult == 0 ? " (OK)" : " (FEHLER)");
+  
+  if (setAddrResult != 0) return false;
+  
+  // Anfrage für ein Byte
+  byte requestResult = wirePort.requestFrom(address, (uint8_t)1);
+  
+  Serial.print("  Leseanfrage-Ergebnis: ");
+  Serial.print(requestResult);
+  Serial.println(requestResult == 1 ? " (OK)" : " (FEHLER)");
+  
+  if (requestResult != 1) return false;
+  
+  // Gelesenes Byte
+  byte readValue = wirePort.read();
+  
+  Serial.print("  Gelesener Wert: 0x");
+  Serial.println(readValue, HEX);
+  
+  return (readValue == testValue);
+}
+
+// Verbesserte I2C-Bus Reset-Funktion
+void resetI2CBus(int sdaPin, int sclPin) {
+  Serial.println("I2C-Bus zurücksetzen...");
+  
+  // Aktuelle Wire-Instanz beenden
+  if (sdaPin == SDA_PIN_EEPROM) {
+    Wire1.end();
+  } else {
+    Wire.end();
+  }
+  delay(300);
+  
+  // Pins als Eingänge mit Pullup konfigurieren
+  pinMode(sdaPin, INPUT_PULLUP);
+  pinMode(sclPin, INPUT_PULLUP);
+  delay(100);
+  
+  // Pins als Ausgänge konfigurieren
+  pinMode(sdaPin, OUTPUT);
+  pinMode(sclPin, OUTPUT);
+  
+  // Beide Leitungen auf HIGH (Idle-Zustand)
+  digitalWrite(sdaPin, HIGH);
+  digitalWrite(sclPin, HIGH);
+  delay(100);
+  
+  // Clock-Cycling: 16 Taktzyklen senden
+  for (int i = 0; i < 16; i++) {
+    digitalWrite(sclPin, LOW);
+    delay(5);
+    digitalWrite(sclPin, HIGH);
+    delay(5);
+  }
+  
+  // STOP-Bedingung simulieren
+  digitalWrite(sdaPin, LOW);
+  delay(5);
+  digitalWrite(sclPin, HIGH);
+  delay(5);
+  digitalWrite(sdaPin, HIGH);
+  delay(20);
+  
+  Serial.println("I2C-Bus Reset abgeschlossen.");
+}
+
+// Testfunktion mit verschiedenen Frequenzen
+void testWithFrequency(TwoWire &wirePort, int sdaPin, int sclPin, uint32_t frequency, bool isEEPROM) {
+  Serial.print("\n>>> TESTE MIT I2C-FREQUENZ: ");
+  Serial.print(frequency / 1000);
+  Serial.print(" kHz auf Bus ");
+  Serial.print((sdaPin == SDA_PIN_EEPROM) ? "EEPROM (16/17)" : "OLED/RTC (21/22)");
+  Serial.println(" <<<\n");
+  
+  wirePort.setClock(frequency);
+  delay(100);
+  
+  // I2C-Adress-Scan
+  Serial.println("I2C-Scanner (suche alle Geräte):");
+  Serial.println("-----------------------------");
+  byte deviceCount = 0;
+  
+  for (byte address = 1; address < 128; address++) {
+    wirePort.beginTransmission(address);
+    byte error = wirePort.endTransmission();
+    
+    if (error == 0) {
+      Serial.print("Gerät gefunden an Adresse 0x");
+      if (address < 16) Serial.print("0");
+      Serial.println(address, HEX);
+      deviceCount++;
+    }
+  }
+  
+  Serial.print("Insgesamt ");
+  Serial.print(deviceCount);
+  Serial.println(" Geräte gefunden\n");
+  
+  // Je nach Bus unterschiedliche Tests durchführen
+  if (isEEPROM) {
+    // EEPROM-Tests
+    Serial.println("EEPROM-Tests an verschiedenen Adressen:");
+    Serial.println("-------------------------------------");
+    
+    const byte possibleAddresses[] = {0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57};
+    for (int i = 0; i < sizeof(possibleAddresses); i++) {
+      // Basis-Erreichbarkeitstest
+      wirePort.beginTransmission(possibleAddresses[i]);
+      byte error = wirePort.endTransmission();
+      
+      Serial.print("Adresse 0x");
+      Serial.print(possibleAddresses[i], HEX);
+      Serial.print(": ");
+      
+      if (error == 0) {
+        Serial.println("GERÄT GEFUNDEN - Führe Lese/Schreib-Tests durch");
+        
+        // Test an mehreren Positionen
+        bool test1 = testEEPROMAtAddress(wirePort, possibleAddresses[i], 0x0000, 0xA5);
+        delay(50);
+        bool test2 = testEEPROMAtAddress(wirePort, possibleAddresses[i], 0x0001, 0x5A);
+        delay(50);
+        bool test3 = testEEPROMAtAddress(wirePort, possibleAddresses[i], 0x0010, 0xF0);
+        
+        Serial.println();
+        Serial.print("  Testergebnisse für 0x");
+        Serial.print(possibleAddresses[i], HEX);
+        Serial.print(": ");
+        
+        if (test1 && test2 && test3) {
+          Serial.println("ALLE TESTS BESTANDEN - EEPROM FUNKTIONIERT!");
+          
+          // Bei Erfolg Status auf den Displays anzeigen
+          displayTime.clearBuffer();
+          displayTime.setFont(u8g2_font_helvB12_tf);
+          displayTime.setCursor(5, 20);
+          displayTime.print("EEPROM Test");
+          displayTime.setCursor(5, 40);
+          displayTime.print("Successful!");
+          displayTime.sendBuffer();
+          
+          displayRpm.clearBuffer();
+          displayRpm.setFont(u8g2_font_helvB12_tf);
+          displayRpm.setCursor(5, 20);
+          displayRpm.print("EEPROM at 0x");
+          displayRpm.print(possibleAddresses[i], HEX);
+          displayRpm.setCursor(5, 40);
+          displayRpm.print("All Tests Pass");
+          displayRpm.sendBuffer();
+          
+          delay(1500);
+        } else {
+          Serial.print("Tests fehlgeschlagen (");
+          Serial.print(test1 ? "OK" : "FAIL");
+          Serial.print(", ");
+          Serial.print(test2 ? "OK" : "FAIL");
+          Serial.print(", ");
+          Serial.print(test3 ? "OK" : "FAIL");
+          Serial.println(")");
+          
+          // Bei Fehler entsprechende Meldung
+          displayTime.clearBuffer();
+          displayTime.setFont(u8g2_font_helvB12_tf);
+          displayTime.setCursor(5, 20);
+          displayTime.print("EEPROM Test");
+          displayTime.setCursor(5, 40);
+          displayTime.print("FAILED!");
+          displayTime.sendBuffer();
+          
+          displayRpm.clearBuffer();
+          displayRpm.setFont(u8g2_font_helvB12_tf);
+          displayRpm.setCursor(5, 20);
+          displayRpm.print("Check EEPROM");
+          displayRpm.setCursor(5, 40);
+          displayRpm.print("Connection");
+          displayRpm.sendBuffer();
+          
+          delay(1500);
+        }
+      } else {
+        Serial.print("Nicht gefunden (Fehlercode: ");
+        Serial.print(error);
+        Serial.println(")");
+      }
+      
+      Serial.println(); // Leerzeile für bessere Lesbarkeit
+    }
+  } else {
+    // OLED/RTC-Bus Tests
+    Serial.println("OLED/RTC-Bus Gerätetest:");
+    Serial.println("----------------------");
+    
+    // OLED-Adressen testen
+    const byte oledAddresses[] = {0x3C, 0x3D}; // Typische OLED-Adressen
+    for (int i = 0; i < 2; i++) {
+      wirePort.beginTransmission(oledAddresses[i]);
+      byte error = wirePort.endTransmission();
+      
+      Serial.print("OLED-Adresse 0x");
+      Serial.print(oledAddresses[i], HEX);
+      Serial.print(": ");
+      
+      if (error == 0) {
+        Serial.println("GERÄT GEFUNDEN");
+      } else {
+        Serial.print("Nicht gefunden (Fehlercode: ");
+        Serial.print(error);
+        Serial.println(")");
+      }
+    }
+    
+    // RTC-Adresse testen
+    byte rtcAddress = 0x68;
+    wirePort.beginTransmission(rtcAddress);
+    byte error = wirePort.endTransmission();
+    
+    Serial.print("RTC-Adresse 0x");
+    Serial.print(rtcAddress, HEX);
+    Serial.print(": ");
+    
+    if (error == 0) {
+      Serial.println("GERÄT GEFUNDEN");
+      
+      // RTC-Daten lesen
+      wirePort.beginTransmission(rtcAddress);
+      wirePort.write(0x00); // Starte bei Register 0
+      wirePort.endTransmission();
+      
+      wirePort.requestFrom(rtcAddress, (uint8_t)7); // Lese 7 Bytes (Sekunden, Minuten, Stunden, Tag, Datum, Monat, Jahr)
+      
+      if (wirePort.available() >= 7) {
+        byte second = wirePort.read() & 0x7F;
+        byte minute = wirePort.read() & 0x7F;
+        byte hour = wirePort.read() & 0x3F;
+        byte dayOfWeek = wirePort.read();
+        byte day = wirePort.read();
+        byte month = wirePort.read();
+        byte year = wirePort.read();
+        
+        // BCD zu Dezimal konvertieren
+        second = (second >> 4) * 10 + (second & 0x0F);
+        minute = (minute >> 4) * 10 + (minute & 0x0F);
+        hour = (hour >> 4) * 10 + (hour & 0x0F);
+        day = (day >> 4) * 10 + (day & 0x0F);
+        month = (month >> 4) * 10 + (month & 0x0F);
+        year = (year >> 4) * 10 + (year & 0x0F);
+        
+        Serial.print("  RTC-Zeit: 20");
+        Serial.print(year);
+        Serial.print("-");
+        Serial.print(month);
+        Serial.print("-");
+        Serial.print(day);
+        Serial.print(" ");
+        Serial.print(hour);
+        Serial.print(":");
+        Serial.print(minute);
+        Serial.print(":");
+        Serial.println(second);
+        
+        // Anzeige auf dem Display
+        displayTime.clearBuffer();
+        displayTime.setFont(u8g2_font_helvB12_tf);
+        displayTime.setCursor(5, 20);
+        displayTime.print("RTC Test OK");
+        displayTime.setCursor(5, 40);
+        displayTime.print("Time Found!");
+        displayTime.sendBuffer();
+        
+        displayRpm.clearBuffer();
+        displayRpm.setFont(u8g2_font_helvB12_tf);
+        displayRpm.setCursor(5, 20);
+        displayRpm.print("20");
+        displayRpm.print(year);
+        displayRpm.print("-");
+        displayRpm.print(month);
+        displayRpm.print("-");
+        displayRpm.print(day);
+        displayRpm.setCursor(5, 40);
+        displayRpm.print(hour);
+        displayRpm.print(":");
+        displayRpm.print(minute);
+        displayRpm.print(":");
+        displayRpm.print(second);
+        displayRpm.sendBuffer();
+        
+        delay(1500);
+      }
+    } else {
+      Serial.print("Nicht gefunden (Fehlercode: ");
+      Serial.print(error);
+      Serial.println(")");
+      
+      // RTC-Fehler anzeigen
+      displayTime.clearBuffer();
+      displayTime.setFont(u8g2_font_helvB12_tf);
+      displayTime.setCursor(5, 20);
+      displayTime.print("RTC Test");
+      displayTime.setCursor(5, 40);
+      displayTime.print("FAILED!");
+      displayTime.sendBuffer();
+      
+      displayRpm.clearBuffer();
+      displayRpm.setFont(u8g2_font_helvB12_tf);
+      displayRpm.setCursor(5, 20);
+      displayRpm.print("Check RTC");
+      displayRpm.setCursor(5, 40);
+      displayRpm.print("Connection");
+      displayRpm.sendBuffer();
+      
+      delay(1500);
+    }
+  }
+}
+
+// Modifiziere die setup()-Funktion, um die I2C-Tests einzufügen
 void setup() {
   Serial.begin(115200);
   Serial.println("Setup gestartet");
@@ -1459,6 +1769,10 @@ void setup() {
   // --- SCHRITT 1: I2C-Bus und Displays initialisieren ---
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(100000); // 100kHz für stabilere Kommunikation
+  
+  // Initialisiere Wire1 für den EEPROM-Bus
+  Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
+  Wire1.setClock(100000); // 100kHz für stabilere Kommunikation
   
   // Displays initialisieren
   displayTime.setI2CAddress(OLED_TIME_ADDR * 2);
@@ -1481,10 +1795,112 @@ void setup() {
   displayRpm.sendBuffer();
   
   delay(1000);
-    
-  // --- SCHRITT 2: I2C-Scanner und RTC-Initialisierung ---
-  scanI2C();
   
+  // --- SCHRITT 2: Starte die verbesserten I2C-Tests ---
+  displayTime.clearBuffer();
+  displayTime.setFont(u8g2_font_helvB12_tf);
+  displayTime.setCursor(0, 20);
+  displayTime.print("Starting");
+  displayTime.setCursor(0, 40);
+  displayTime.print("I2C Bus Tests");
+  displayTime.sendBuffer();
+  
+  displayRpm.clearBuffer();
+  displayRpm.setFont(u8g2_font_helvB12_tf);
+  displayRpm.setCursor(0, 20);
+  displayRpm.print("Comprehensive");
+  displayRpm.setCursor(0, 40);
+  displayRpm.print("Diagnostics");
+  displayRpm.sendBuffer();
+  
+  delay(1000);
+
+  Serial.println("EEPROM-Bus vor Tests:");
+  Wire1.beginTransmission(EEPROM_ADDRESS);
+  Serial.print("Test-Ergebnis: ");
+  Serial.println(Wire1.endTransmission());
+
+  Serial.println("\n\n=================================================");
+  Serial.println("       ESP32 I2C-BUSSE DIAGNOSE-PROGRAMM");
+  Serial.println("=================================================\n");
+  
+  Serial.println("Dieses Programm testet die Kommunikation mit Geräten");
+  Serial.println("an zwei verschiedenen I2C-Bussen mit mehreren");
+  Serial.println("Geschwindigkeiten, um Hardwareprobleme zu isolieren.\n");
+  
+  Serial.println("Systeminfo:");
+  Serial.print("- ESP32 SDK Version: ");
+  Serial.println(ESP.getSdkVersion());
+  Serial.print("- Freier Heap: ");
+  Serial.println(ESP.getFreeHeap());
+  Serial.println("- Bus 1 (EEPROM):");
+  Serial.print("  SDA-Pin: ");
+  Serial.println(SDA_PIN_EEPROM);
+  Serial.print("  SCL-Pin: ");
+  Serial.println(SCL_PIN_EEPROM);
+  Serial.println("- Bus 2 (OLED/RTC):");
+  Serial.print("  SDA-Pin: ");
+  Serial.println(SDA_PIN);
+  Serial.print("  SCL-Pin: ");
+  Serial.println(SCL_PIN);
+  
+  // ================================================================
+  // Test EEPROM-Bus (I2C Bus 1 auf Pins 16/17)
+  // ================================================================
+  Serial.println("\n\n=================================================");
+  Serial.println("       TEST EEPROM-BUS (Pins 16/17)");
+  Serial.println("=================================================\n");
+  
+  Serial.println("\nEEPROM-Bus-Test wird gestartet...");
+  
+  // I2C-Bus zurücksetzen
+  resetI2CBus(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
+  
+  // I2C-Bus neu starten
+  Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
+  delay(200);
+  
+  // Test mit 10 kHz
+  testWithFrequency(Wire1, SDA_PIN_EEPROM, SCL_PIN_EEPROM, 10000, true);
+  
+  // ================================================================
+  // Test OLED/RTC-Bus (I2C Bus 2 auf Pins 21/22)
+  // ================================================================
+  Serial.println("\n\n=================================================");
+  Serial.println("       TEST OLED/RTC-BUS (Pins 21/22)");
+  Serial.println("=================================================\n");
+  
+  Serial.println("\nOLED/RTC-Bus-Test wird gestartet...");
+  
+  // I2C-Bus zurücksetzen
+  resetI2CBus(SDA_PIN, SCL_PIN);
+  
+  // I2C-Bus neu starten
+  Wire.begin(SDA_PIN, SCL_PIN);
+  delay(200);
+  
+  // Test mit 10 kHz
+  testWithFrequency(Wire, SDA_PIN, SCL_PIN, 10000, false);
+  
+  // ================================================================
+  // Zusammenfassung
+  // ================================================================
+  Serial.println("\n=================================================");
+  Serial.println("         ALLE TESTS ABGESCHLOSSEN");
+  Serial.println("=================================================\n");
+  
+  // I2C-Bus nach Tests zurücksetzen und mit normaler Geschwindigkeit neu starten
+  resetI2CBus(SDA_PIN, SCL_PIN);
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000);
+  
+  resetI2CBus(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
+  Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
+  Wire1.setClock(100000);
+
+  // --- SCHRITT 3: I2C-Scanner und RTC-Initialisierung ---
+  scanI2C();
+    
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC!");
     displayTime.clearBuffer();
@@ -1493,6 +1909,8 @@ void setup() {
     displayTime.sendBuffer();
     while (1) delay(10);
   }
+  
+  // RTC initialisieren
   
   rtc.disable32K();
   pinMode(CLOCK_INTERRUPT_PIN, INPUT_PULLUP);
@@ -1565,6 +1983,33 @@ void setup() {
     sdCardAvailable = true;
   }
   
+    // Nach erfolgreicher SD-Initialisierung
+  Serial.println("SD-Karte initialisiert");
+  
+  // SPI explizit beenden
+  SPI.endTransaction();
+  delay(200);  // Mehr Zeit für Stabilisierung
+  
+  // I2C-Busse neu initialisieren (getrennt)
+  Wire.end();  // Hauptbus beenden
+  Wire1.end(); // EEPROM-Bus beenden
+  delay(200);  
+  
+  // Erst EEPROM-Bus wieder starten
+  Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
+  Wire1.setClock(50000); // Niedrigere Frequenz
+  delay(100);
+  
+  // Dann Hauptbus wieder starten
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000);
+  delay(100);
+
+  Serial.println("EEPROM-Bus nach SD-Init:");
+  Wire1.beginTransmission(EEPROM_ADDRESS);
+  Serial.print("Test-Ergebnis: ");
+  Serial.println(Wire1.endTransmission());
+
   // --- SCHRITT 5: I2C-Bus nach SD-Initialisierung zurücksetzen ---
   Serial.println("I2C-Bus nach SD-Karten-Init zurücksetzen...");
   resetI2CBus();
