@@ -1,0 +1,318 @@
+RPM-Sensor-Box Test HR 225-06-08  07:25 NK
+Angeschlossen Platinen 1,2 und 3
+I2C Bus 1 auf Platine 3 das EEPROM 512K mit Adresse 0x50
+I2C Bus 2 auf Platine 1 zwei OLED Displays mit Adressen 0x3C und 0x3D
+I2C Bus 2 auf Platine 1 RTC Clock mit Adress 0x68
+===================================================================
+
+---- Opened the serial port COM5 ----
+
+
+=================================================
+       ESP32 I2C-BUSSE DIAGNOSE-PROGRAMM
+=================================================
+
+Dieses Programm testet die Kommunikation mit Geräten
+an zwei verschiedenen I2C-Bussen mit mehreren
+Geschwindigkeiten, um Hardwareprobleme zu isolieren.
+
+Systeminfo:
+- ESP32 SDK Version: v5.4.1-1-g2f7dcd862a-dirty
+- Freier Heap: 334428
+- Bus 1 (EEPROM):
+  SDA-Pin: 16
+  SCL-Pin: 17
+- Bus 2 (OLED/RTC):
+  SDA-Pin: 21
+  SCL-Pin: 22
+
+
+=================================================
+       TEST EEPROM-BUS (Pins 16/17)
+=================================================
+
+
+EEPROM-Bus-Test wird gestartet...
+I2C-Bus zurücksetzen...
+I2C-Bus Reset abgeschlossen.
+
+>>> TESTE MIT I2C-FREQUENZ: 10 kHz auf Bus EEPROM (16/17) <<<
+
+I2C-Scanner (suche alle Geräte):
+-----------------------------
+Gerät gefunden an Adresse 0x50
+Insgesamt 1 Geräte gefunden
+
+EEPROM-Tests an verschiedenen Adressen:
+-------------------------------------
+Adresse 0x50: GERÄT GEFUNDEN - Führe Lese/Schreib-Tests durch
+Test EEPROM bei Adresse 0x50 mit Wert 0xA5 an Position 0x0...
+  Schreibergebnis: 0 (OK)
+  Leseadresse setzen: 0 (OK)
+  Leseanfrage-Ergebnis: 1 (OK)
+  Gelesener Wert: 0xA5
+Test EEPROM bei Adresse 0x50 mit Wert 0x5A an Position 0x1...
+  Schreibergebnis: 0 (OK)
+  Leseadresse setzen: 0 (OK)
+  Leseanfrage-Ergebnis: 1 (OK)
+  Gelesener Wert: 0x5A
+Test EEPROM bei Adresse 0x50 mit Wert 0xF0 an Position 0x10...
+  Schreibergebnis: 0 (OK)
+  Leseadresse setzen: 0 (OK)
+  Leseanfrage-Ergebnis: 1 (OK)
+  Gelesener Wert: 0xF0
+
+  Testergebnisse für 0x50: ALLE TESTS BESTANDEN - EEPROM FUNKTIONIERT!
+
+Adresse 0x51: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x52: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x53: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x54: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x55: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x56: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x57: Nicht gefunden (Fehlercode: 2)
+
+I2C-Bus zurücksetzen...
+I2C-Bus Reset abgeschlossen.
+
+>>> TESTE MIT I2C-FREQUENZ: 50 kHz auf Bus EEPROM (16/17) <<<
+
+I2C-Scanner (suche alle Geräte):
+-----------------------------
+Gerät gefunden an Adresse 0x50
+Insgesamt 1 Geräte gefunden
+
+EEPROM-Tests an verschiedenen Adressen:
+-------------------------------------
+Adresse 0x50: GERÄT GEFUNDEN - Führe Lese/Schreib-Tests durch
+Test EEPROM bei Adresse 0x50 mit Wert 0xA5 an Position 0x0...
+  Schreibergebnis: 0 (OK)
+  Leseadresse setzen: 0 (OK)
+  Leseanfrage-Ergebnis: 1 (OK)
+  Gelesener Wert: 0xA5
+Test EEPROM bei Adresse 0x50 mit Wert 0x5A an Position 0x1...
+  Schreibergebnis: 0 (OK)
+  Leseadresse setzen: 0 (OK)
+  Leseanfrage-Ergebnis: 1 (OK)
+  Gelesener Wert: 0x5A
+Test EEPROM bei Adresse 0x50 mit Wert 0xF0 an Position 0x10...
+  Schreibergebnis: 0 (OK)
+  Leseadresse setzen: 0 (OK)
+  Leseanfrage-Ergebnis: 1 (OK)
+  Gelesener Wert: 0xF0
+
+  Testergebnisse für 0x50: ALLE TESTS BESTANDEN - EEPROM FUNKTIONIERT!
+
+Adresse 0x51: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x52: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x53: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x54: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x55: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x56: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x57: Nicht gefunden (Fehlercode: 2)
+
+I2C-Bus zurücksetzen...
+I2C-Bus Reset abgeschlossen.
+
+>>> TESTE MIT I2C-FREQUENZ: 100 kHz auf Bus EEPROM (16/17) <<<
+
+I2C-Scanner (suche alle Geräte):
+-----------------------------
+Gerät gefunden an Adresse 0x50
+Insgesamt 1 Geräte gefunden
+
+EEPROM-Tests an verschiedenen Adressen:
+-------------------------------------
+Adresse 0x50: GERÄT GEFUNDEN - Führe Lese/Schreib-Tests durch
+Test EEPROM bei Adresse 0x50 mit Wert 0xA5 an Position 0x0...
+  Schreibergebnis: 0 (OK)
+  Leseadresse setzen: 0 (OK)
+  Leseanfrage-Ergebnis: 1 (OK)
+  Gelesener Wert: 0xA5
+Test EEPROM bei Adresse 0x50 mit Wert 0x5A an Position 0x1...
+  Schreibergebnis: 0 (OK)
+  Leseadresse setzen: 0 (OK)
+  Leseanfrage-Ergebnis: 1 (OK)
+  Gelesener Wert: 0x5A
+Test EEPROM bei Adresse 0x50 mit Wert 0xF0 an Position 0x10...
+  Schreibergebnis: 0 (OK)
+  Leseadresse setzen: 0 (OK)
+  Leseanfrage-Ergebnis: 1 (OK)
+  Gelesener Wert: 0xF0
+
+  Testergebnisse für 0x50: ALLE TESTS BESTANDEN - EEPROM FUNKTIONIERT!
+
+Adresse 0x51: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x52: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x53: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x54: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x55: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x56: Nicht gefunden (Fehlercode: 2)
+
+Adresse 0x57: Nicht gefunden (Fehlercode: 2)
+
+
+
+=================================================
+       TEST OLED/RTC-BUS (Pins 21/22)
+=================================================
+
+
+OLED/RTC-Bus-Test wird gestartet...
+I2C-Bus zurücksetzen...
+I2C-Bus Reset abgeschlossen.
+
+>>> TESTE MIT I2C-FREQUENZ: 10 kHz auf Bus OLED/RTC (21/22) <<<
+
+I2C-Scanner (suche alle Geräte):
+-----------------------------
+Gerät gefunden an Adresse 0x3C
+Gerät gefunden an Adresse 0x3D
+Gerät gefunden an Adresse 0x57
+Gerät gefunden an Adresse 0x68
+Insgesamt 4 Geräte gefunden
+
+OLED/RTC-Bus Gerätetest:
+----------------------
+OLED-Adresse 0x3C: GERÄT GEFUNDEN
+OLED-Adresse 0x3D: GERÄT GEFUNDEN
+RTC-Adresse 0x68: GERÄT GEFUNDEN
+  RTC-Zeit: 200-1-2 18:39:8
+
+I2C-Bus zurücksetzen...
+I2C-Bus Reset abgeschlossen.
+
+>>> TESTE MIT I2C-FREQUENZ: 50 kHz auf Bus OLED/RTC (21/22) <<<
+
+I2C-Scanner (suche alle Geräte):
+-----------------------------
+Gerät gefunden an Adresse 0x3C
+Gerät gefunden an Adresse 0x3D
+Gerät gefunden an Adresse 0x57
+Gerät gefunden an Adresse 0x68
+Insgesamt 4 Geräte gefunden
+
+OLED/RTC-Bus Gerätetest:
+----------------------
+OLED-Adresse 0x3C: GERÄT GEFUNDEN
+OLED-Adresse 0x3D: GERÄT GEFUNDEN
+RTC-Adresse 0x68: GERÄT GEFUNDEN
+  RTC-Zeit: 200-1-2 18:39:9
+
+I2C-Bus zurücksetzen...
+I2C-Bus Reset abgeschlossen.
+
+>>> TESTE MIT I2C-FREQUENZ: 100 kHz auf Bus OLED/RTC (21/22) <<<
+
+I2C-Scanner (suche alle Geräte):
+-----------------------------
+Gerät gefunden an Adresse 0x3C
+Gerät gefunden an Adresse 0x3D
+Gerät gefunden an Adresse 0x57
+Gerät gefunden an Adresse 0x68
+Insgesamt 4 Geräte gefunden
+
+OLED/RTC-Bus Gerätetest:
+----------------------
+OLED-Adresse 0x3C: GERÄT GEFUNDEN
+OLED-Adresse 0x3D: GERÄT GEFUNDEN
+RTC-Adresse 0x68: GERÄT GEFUNDEN
+  RTC-Zeit: 200-1-2 18:39:10
+
+
+=================================================
+         ALLE TESTS ABGESCHLOSSEN
+=================================================
+
+Bitte überprüfen Sie die Ausgaben auf Probleme und
+stellen Sie sicher, dass die Hardware korrekt angeschlossen ist.
+
+EEPROM-Bus (16/17):
+1. Sind die Pullup-Widerstände angeschlossen?
+2. Sind die EEPROM-Adresspins A0, A1, A2 korrekt gesetzt?
+3. Ist die Stromversorgung des EEPROMs stabil bei 3,3V?
+4. Ist der WP-Pin (Write Protect) auf GND gesetzt?
+
+OLED/RTC-Bus (21/22):
+1. Sind die Pullup-Widerstände angeschlossen?
+2. Sind die OLED-Displays an den korrekten Adressen (0x3C, 0x3D)?
+3. Ist die RTC an der Adresse 0x68 erreichbar?
+
+Programm verbleibt in Dauerschleife.
+
+--- Periodischer EEPROM-Bus Test ---
+Single I2C test starting on EEPROM Bus (16/17) in 4 seconds...
+3
+2
+1
+NOW!
+Testing EEPROM address 0x50
+Result: 0
+Testing EEPROM address 0x51
+E (17949) i2c.master: I2C hardware NACK detected
+E (17950) i2c.master: I2C transaction unexpected nack detected
+E (17950) i2c.master: s_i2c_synchronous_transaction(924): I2C transaction failed
+E (17957) i2c.master: i2c_master_multi_buffer_transmit(1186): I2C transaction failed
+[ 17985][E][esp32-hal-i2c-ng.c:265] i2cWrite(): i2c_master_transmit failed: [259] ESP_ERR_INVALID_STATE
+Result: 4
+Testing EEPROM address 0x52
+E (18085) i2c.master: I2C hardware NACK detected
+E (18086) i2c.master: I2C transaction unexpected nack detected
+E (18086) i2c.master: s_i2c_synchronous_transaction(924): I2C transaction failed
+E (18093) i2c.master: i2c_master_multi_buffer_transmit(1186): I2C transaction failed
+[ 18121][E][esp32-hal-i2c-ng.c:265] i2cWrite(): i2c_master_transmit failed: [259] ESP_ERR_INVALID_STATE
+Result: 4
+Testing EEPROM address 0x53
+E (18221) i2c.master: I2C hardware NACK detected
+E (18222) i2c.master: I2C transaction unexpected nack detected
+E (18222) i2c.master: s_i2c_synchronous_transaction(924): I2C transaction failed
+E (18229) i2c.master: i2c_master_multi_buffer_transmit(1186): I2C transaction failed
+[ 18257][E][esp32-hal-i2c-ng.c:265] i2cWrite(): i2c_master_transmit failed: [259] ESP_ERR_INVALID_STATE
+Result: 4
+Testing EEPROM address 0x54
+E (18357) i2c.master: I2C hardware NACK detected
+E (18358) i2c.master: I2C transaction unexpected nack detected
+E (18358) i2c.master: s_i2c_synchronous_transaction(924): I2C transaction failed
+E (18365) i2c.master: i2c_master_multi_buffer_transmit(1186): I2C transaction failed
+[ 18393][E][esp32-hal-i2c-ng.c:265] i2cWrite(): i2c_master_transmit failed: [259] ESP_ERR_INVALID_STATE
+Result: 4
+Testing EEPROM address 0x55
+E (18493) i2c.master: I2C hardware NACK detected
+E (18494) i2c.master: I2C transaction unexpected nack detected
+E (18494) i2c.master: s_i2c_synchronous_transaction(924): I2C transaction failed
+E (18501) i2c.master: i2c_master_multi_buffer_transmit(1186): I2C transaction failed
+[ 18529][E][esp32-hal-i2c-ng.c:265] i2cWrite(): i2c_master_transmit failed: [259] ESP_ERR_INVALID_STATE
+Result: 4
+Testing EEPROM address 0x56
+E (18629) i2c.master: I2C hardware NACK detected
+E (18630) i2c.master: I2C transaction unexpected nack detected
+E (18630) i2c.master: s_i2c_synchronous_transaction(924): I2C transaction failed
+E (18637) i2c.master: i2c_master_multi_buffer_transmit(1186): I2C transaction failed
+[ 18665][E][esp32-hal-i2c-ng.c:265] i2cWrite(): i2c_master_transmit failed: [259] ESP_ERR_INVALID_STATE
+Result: 4
+Testing EEPROM address 0x57
+E (18765) i2c.master: I2C hardware NACK detected
+E (18766) i2c.master: I2C transaction unexpected nack detected
+E (18766) i2c.master: s_i2c_synchronous_transaction(924): I2C transaction failed
+E (18773) i2c.master: i2c_master_multi_buffer_transmit(1186): I2C transaction failed
+[ 18801][E][esp32-hal-i2c-ng.c:265] i2cWrite(): i2c_master_transmit failed: [259] ESP_ERR_INVALID_STATE
+Result: 4
+I2C test completed
+---- Closed the serial port COM5 ----
