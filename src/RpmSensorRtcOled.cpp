@@ -155,6 +155,57 @@ void eraseEEPROM();
 void readEEPROMHeader();
 void writeEEPROMHeader();
 
+// Globale Debug-Flag Variable
+bool debugMode = false;
+
+// Debug-Hilfsfunktion, die nur ausgibt wenn Debug aktiviert ist
+void debugPrint(const char* message) {
+  if (debugMode) {
+    Serial.print("[DEBUG] ");
+    Serial.println(message);
+  }
+}
+
+// Überladene Funktion für Werte
+void debugPrint(const char* message, long value) {
+  if (debugMode) {
+    Serial.print("[DEBUG] ");
+    Serial.print(message);
+    Serial.println(value);
+  }
+}
+
+// Überladene Funktion für Float-Werte
+void debugPrint(const char* message, float value, int precision = 2) {
+  if (debugMode) {
+    Serial.print("[DEBUG] ");
+    Serial.print(message);
+    Serial.println(value, precision);
+  }
+}
+// Neue Überladung für unsigned long hinzufügen
+void debugPrint(const char* message, unsigned long value) {
+  if (debugMode) {
+    Serial.print("[DEBUG] ");
+    Serial.print(message);
+    Serial.println(value);
+  }
+}
+// Debug-Modus umschalten
+void toggleDebugMode(bool newState) {
+  debugMode = newState;
+  Serial.print("Debug-Modus ");
+  Serial.println(debugMode ? "aktiviert" : "deaktiviert");
+}
+
+// Neue Überladung für char* als zweiten Parameter
+void debugPrint(const char* message, const char* value) {
+  if (debugMode) {
+    Serial.print("[DEBUG] ");
+    Serial.print(message);
+    Serial.println(value);
+  }
+}
 
 void IRAM_ATTR Rpm_isr() {
   static unsigned long lastInterruptTime = 0;
@@ -218,10 +269,9 @@ void updateTimeFromRTC() {
   DateTime now = rtc.now();
   
   // Debug-Ausgabe
-  Serial.print("RTC Zeit: ");
-  Serial.print(now.hour()); Serial.print(":");
-  Serial.print(now.minute()); Serial.print(":");
-  Serial.println(now.second());
+char timeStr[10];
+sprintf(timeStr, "%d:%d:%d", now.hour(), now.minute(), now.second());
+debugPrint("RTC Zeit: ", timeStr);  // Statt mehrerer Serial.print
   
   hour = now.hour();
   minute = now.minute();
@@ -1300,35 +1350,59 @@ LogRecord readRecordFromEEPROM(uint32_t recordIndex) {
   return record;
 }
 
-// Verarbeitung von seriellen Befehlen für EEPROM-Zugriff
 void handleSerialCommands() {
   if (Serial.available()) {
     String command = Serial.readStringUntil('\n');
-    command.trim();
+    command.trim();  // Entfernt alle unsichtbaren Zeichen
     
-    if (command == "download") {
-      downloadEEPROMDataToUSB();
-    } 
-    else if (command == "erase") {
-      Serial.println("EEPROM wird gelöscht...");
-      eraseEEPROM();
-      Serial.println("EEPROM gelöscht.");
+    // Detaillierte Diagnose des Befehls
+    Serial.print("Empfangener Befehl: '");
+    Serial.print(command);
+    Serial.println("'");
+    Serial.print("Befehlslänge: ");
+    Serial.println(command.length());
+    
+    if (command.equals("debug off")) {
+      // Direkte Neuschreibung des Werts mit Bestätigung
+      Serial.println("FORCE: Debug-Modus wird deaktiviert");
+      debugMode = false;
+      delay(10); // Kleine Pause
+      Serial.print("Debug-Status nach Änderung: ");
+      Serial.println(debugMode ? "AN" : "AUS");
     }
-    else if (command == "info") {
-      Serial.print("EEPROM Status: ");
-      Serial.println(eepromAvailable ? "Verfügbar" : "Nicht verfügbar");
-      Serial.print("Gespeicherte Datensätze: ");
-      Serial.println(eepromHeader.recordCount);
-      Serial.print("Verwendeter Speicher: ");
-      Serial.print((eepromHeader.nextWriteAddress * 100.0) / EEPROM_SIZE, 2);
-      Serial.println("%");
+    else if (command.equals("debug on")) {
+      Serial.println("FORCE: Debug-Modus wird aktiviert");
+      debugMode = true;
+      delay(10);
+      Serial.print("Debug-Status nach Änderung: ");
+      Serial.println(debugMode ? "AN" : "AUS");
     }
+    
     else if (command == "help") {
       Serial.println("Verfügbare Befehle:");
-      Serial.println("  download - Alle EEPROM-Daten herunterladen");
-      Serial.println("  erase    - EEPROM komplett löschen");
-      Serial.println("  info     - EEPROM-Statusinformationen anzeigen");
+      Serial.println("  download - EEPROM-Daten als CSV herunterladen");
+      Serial.println("  info     - EEPROM-Status anzeigen");
+      Serial.println("  erase    - EEPROM-Daten löschen");
+      Serial.println("  debug on  - Debug-Ausgaben aktivieren");
+      Serial.println("  debug off - Debug-Ausgaben deaktivieren");
       Serial.println("  help     - Diese Hilfe anzeigen");
+    }
+    else if (command == "download") {
+      downloadEEPROMDataToUSB();
+    }
+    else if (command == "info") {
+      Serial.println("EEPROM Status: " + String(eepromAvailable ? "Verfügbar" : "Nicht verfügbar"));
+      Serial.println("Gespeicherte Datensätze: " + String(eepromHeader.recordCount));
+      float usedPercent = (eepromHeader.nextWriteAddress * 100.0) / EEPROM_SIZE;
+      Serial.print("Verwendeter Speicher: ");
+      Serial.print(usedPercent, 2);
+      Serial.println("%");
+    }
+    else if (command == "erase") {
+      eraseEEPROM();
+    }
+    else {
+      Serial.println("Unbekannter Befehl. Tippe 'help' für eine Liste der Befehle.");
     }
   }
 }
@@ -2194,10 +2268,8 @@ void loop() {
     Rpm = capturedImpulses * 60 / RpmTriggerPerRound;
     
     // Debug-Ausgabe
-    Serial.print("Erfasste Impulse in der letzten Sekunde: ");
-    Serial.println(capturedImpulses);
-    Serial.print("RPM: ");
-    Serial.println(Rpm);
+  debugPrint("Erfasste Impulse in der letzten Sekunde: ", capturedImpulses);
+  debugPrint("RPM: ", (long)Rpm);  // Statt Serial.print/println
     
     // Jetzt erst zurücksetzen
     Rpm_Count_LastSecond = 0;
