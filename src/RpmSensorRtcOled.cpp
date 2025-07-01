@@ -33,10 +33,12 @@
 #define BUTTON_SET 27   // GPIO für die "SET"-Taste
 
 // Neue Konstante für genauere RPM-Messung
-#define RpmTriggerPerRound 3 // 6 Impulse pro Umdrehung für präzisere Messung
+#define RpmTriggerPerRound 1 // 1 Impulse pro Umdrehung für präzisere Messung
 
-#define IR_SENSOR_PIN 15 // GPIO15: Infrarotsensor Pin
 #define LED_PIN 12      // GPIO12: Kontroll-LED Pin
+
+#define HALL_SENSOR_PIN 15  // GPIO-Pin für den Hall-Sensor
+#define RpmTriggerPerRound 1  // 1 Magnete = 2 Impulse pro Umdrehung
 
 // I2C Pins für den Haupt-Bus (Displays, RTC) / I2C-1
 #define SDA_PIN 21
@@ -93,8 +95,9 @@ struct __attribute__((packed)) EEPROMHeader {
 // EEPROM-Verwaltungsvariablen
 EEPROMHeader eepromHeader;
 bool eepromAvailable = false;
-uint32_t lastEepromWrite = 0;
+unsigned long lastEEPROMWrite = 0;  // Zeitpunkt des letzten EEPROM-Schreibvorgangs
 const uint32_t EEPROM_WRITE_INTERVAL = 10000; // 10 Sekunden zwischen Schreibvorgängen
+uint8_t bufferIndex = 0;  // Aktueller Index im Datenpuffer
 
 // RTC Modul
 RTC_DS3231 rtc;
@@ -118,6 +121,9 @@ enum SetupState {
 volatile SetupState currentState = NORMAL;
 volatile bool stateChanged = false;
 volatile bool buttonPressed = false;
+// Tastenzustände (ergänze zu deinen existierenden globalen Variablen)
+volatile bool plusButtonPressed = false;  // Für die "+"-Taste
+volatile bool minusButtonPressed = false; // Für die "-"-Taste
 
 // Variablen für Datum und Zeit
 int hour = 0;
@@ -131,6 +137,9 @@ int year = 2025; // Neu: Jahr
 volatile unsigned long Rpm_Count; // Zähler für Interrupts
 volatile unsigned long Rpm_Count_LastSecond; // Zähler für letzte Sekunde
 int Rpm;                          // Variable für die aktuelle RPM
+volatile unsigned long pulsePeriod = 0;      // NEUE VARIABLE: Zeit zwischen Impulsen
+volatile unsigned long pulseCount = 0;  
+volatile bool newPulseDetected = false;  
 unsigned long lastTime;           // Variable für die letzte Zeitmessung
 unsigned long lastOutputTime = 0; // Zeitpunkt der letzten Ausgabe
 unsigned long lastSecondRpmCount = 0; // Zeitpunkt der letzten Sekundenmessung
@@ -154,17 +163,284 @@ void downloadEEPROMDataToUSB();
 void eraseEEPROM();
 void readEEPROMHeader();
 void writeEEPROMHeader();
+void handleButtons(unsigned long currentTime);
+void updateDisplay();
+void displaySetValue(const char* label, int value);
 
+// Interrupt-Handler für SET, PLUS und MINUS Tasten
+void IRAM_ATTR buttonInterrupt() {
+  buttonPressed = true;
+}
+
+void IRAM_ATTR plusButtonInterrupt() {
+  plusButtonPressed = true;
+}
+
+void IRAM_ATTR minusButtonInterrupt() {
+  minusButtonPressed = true;
+}
 
 void IRAM_ATTR Rpm_isr() {
   static unsigned long lastInterruptTime = 0;
   unsigned long interruptTime = micros();
+  unsigned long interval = interruptTime - lastInterruptTime;
   
-  // Entprellung: Erhöht auf 20ms für unsaubere Impulse (10-15ms im Oszilloskop gesehen)
-  if (interruptTime - lastInterruptTime > 5000) { // 5000 Mikrosekunden = 5 Millisekunden
-    Rpm_Count = Rpm_Count + 1;
-    Rpm_Count_LastSecond = Rpm_Count_LastSecond + 1;
+  // Entprellung (2ms sollte für diesen Sensor ausreichen)
+  if (interval > 2000) {
+    pulsePeriod = interval;
     lastInterruptTime = interruptTime;
+    newPulseDetected = true;
+  }
+}
+
+void setupButtons() {
+  // Bestehender Code für SET-Taste
+  pinMode(BUTTON_SET, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_SET), buttonInterrupt, FALLING);
+
+  // Neue Code für PLUS und MINUS Tasten
+  pinMode(BUTTON_PLUS, INPUT_PULLUP);
+  pinMode(BUTTON_MINUS, INPUT_PULLUP);
+  
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PLUS), plusButtonInterrupt, FALLING);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_MINUS), minusButtonInterrupt, FALLING);
+
+  Serial.println("Buttons konfiguriert!");
+  Serial.print("SET: GPIO ");
+  Serial.println(BUTTON_SET);
+  Serial.print("PLUS: GPIO ");
+  Serial.println(BUTTON_PLUS);
+  Serial.print("MINUS: GPIO ");
+  Serial.println(BUTTON_MINUS);
+}
+
+void showTime() {
+  // Datum und Zeit vom RTC lesen
+  DateTime now = rtc.now();
+  
+  // Zeit-Display aktualisieren
+  displayTime.clearBuffer();
+  displayTime.setFont(u8g2_font_helvR10_tr);
+  
+  // Datum formatieren
+  char dateStr[15];
+  sprintf(dateStr, "%02d.%02d.%04d", now.day(), now.month(), now.year());
+  displayTime.setCursor(0, 15);
+  displayTime.print(dateStr);
+  
+  // Zeit formatieren
+  char timeStr[15];
+  sprintf(timeStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+  displayTime.setCursor(0, 35);
+  displayTime.print(timeStr);
+  
+  displayTime.sendBuffer();
+  
+  // RPM-Display wird separat über displayRPM() aktualisiert
+}
+
+void displaySetValue(const char* label, int value) {
+  // Zeit-Display für den Einstellmodus
+  displayTime.clearBuffer();
+  displayTime.setFont(u8g2_font_helvR10_tr);
+  displayTime.setCursor(0, 15);
+  displayTime.print(label);
+  displayTime.setCursor(0, 35);
+  displayTime.print(value);
+  displayTime.sendBuffer();
+  
+  // RPM-Display zeigt KORREKTEN Hilfetext
+  displayRpm.clearBuffer();
+  displayRpm.setFont(u8g2_font_helvR10_tr);
+  displayRpm.setCursor(0, 15);
+  displayRpm.print("+ = Erhoehen");
+  displayRpm.setCursor(0, 35);
+  displayRpm.print("- = Verringern");
+  displayRpm.setCursor(0, 55);
+  displayRpm.print("SET = Weiter");
+  displayRpm.sendBuffer();
+}
+
+// Diese Funktion aktualisiert die Anzeige je nach aktuellem Zustand
+void updateDisplay() {
+  // Je nach aktuellem Zustand das Display aktualisieren
+  switch (currentState) {
+    case NORMAL:
+      showTime(); // Diese Funktion sollte bereits in deinem Code existieren
+      break;
+    case SET_DAY:
+      displaySetValue("Tag", day);
+      break;
+    case SET_MONTH:
+      displaySetValue("Monat", month);
+      break;
+    case SET_YEAR:
+      displaySetValue("Jahr", year);
+      break;
+    case SET_HOUR:
+      displaySetValue("Stunde", hour);
+      break;
+    case SET_MINUTE:
+      displaySetValue("Minute", minute);
+      break;
+    case SET_SECOND:
+      displaySetValue("Sekunde", second);
+      break;
+  }
+}
+
+void handleButtons(unsigned long currentTime) {
+  static unsigned long lastButtonPressTime = 0;
+  const unsigned long DEBOUNCE_DELAY = 200;
+ 
+  Serial.print("Button-Status: SET=");
+  Serial.print(buttonPressed);
+  Serial.print(", PLUS=");
+  Serial.print(plusButtonPressed);
+  Serial.print(", MINUS=");
+  Serial.println(minusButtonPressed);
+
+
+  // SET-Taste gedrückt
+  if (buttonPressed) {
+    if (currentTime - lastButtonPressTime > DEBOUNCE_DELAY) {
+      lastButtonPressTime = currentTime;
+      
+      // SET-Taste wechselt zum nächsten Zustand
+      switch (currentState) {
+        case NORMAL:
+          currentState = SET_DAY;
+          break;
+        case SET_DAY:
+          currentState = SET_MONTH;
+          break;
+        case SET_MONTH:
+          currentState = SET_YEAR;
+          break;
+        case SET_YEAR:
+          currentState = SET_HOUR;
+          break;
+        case SET_HOUR:
+          currentState = SET_MINUTE;
+          break;
+        case SET_MINUTE:
+          currentState = SET_SECOND;
+          break;
+        case SET_SECOND:
+          // Wichtig: Zurück zum NORMAL-Modus
+          currentState = NORMAL;
+          
+          // Zeit im RTC aktualisieren
+          rtc.adjust(DateTime(year, month, day, hour, minute, second));
+          Serial.println("Zeit gesetzt, zurück zu NORMAL");
+          break;
+      }
+      
+      stateChanged = true;
+    }
+    buttonPressed = false;
+  }
+  
+  // PLUS-Taste gedrückt
+  if (plusButtonPressed) {
+    if (currentTime - lastButtonPressTime > DEBOUNCE_DELAY) {
+      lastButtonPressTime = currentTime;
+      
+      Serial.println("PLUS Button gedrückt!");
+      
+      // Wert erhöhen basierend auf aktuellem Zustand
+      switch (currentState) {
+        case SET_DAY:
+          day = (day % 31) + 1;  // 1-31 zyklisch
+          Serial.print("Tag erhöht auf: ");
+          Serial.println(day);
+          break;
+        case SET_MONTH:
+          month = (month % 12) + 1;  // 1-12 zyklisch
+          Serial.print("Monat erhöht auf: ");
+          Serial.println(month);
+          break;
+        case SET_YEAR:
+          year = (year < 2099) ? year + 1 : 2000;
+          Serial.print("Jahr erhöht auf: ");
+          Serial.println(year);
+          break;
+        case SET_HOUR:
+          hour = (hour + 1) % 24;
+          Serial.print("Stunde erhöht auf: ");
+          Serial.println(hour);
+          break;
+        case SET_MINUTE:
+          minute = (minute + 1) % 60;
+          Serial.print("Minute erhöht auf: ");
+          Serial.println(minute);
+          break;
+        case SET_SECOND:
+          second = (second + 1) % 60;
+          Serial.print("Sekunde erhöht auf: ");
+          Serial.println(second);
+          break;
+        default:
+          break;
+      }
+      
+      stateChanged = true;
+    }
+    plusButtonPressed = false;
+  }
+  
+  // MINUS-Taste gedrückt
+  if (minusButtonPressed) {
+    if (currentTime - lastButtonPressTime > DEBOUNCE_DELAY) {
+      lastButtonPressTime = currentTime;
+      
+      Serial.println("MINUS Button gedrückt!");
+      
+      // Wert verringern basierend auf aktuellem Zustand
+      switch (currentState) {
+        case SET_DAY:
+          day = (day > 1) ? day - 1 : 31;
+          Serial.print("Tag verringert auf: ");
+          Serial.println(day);
+          break;
+        case SET_MONTH:
+          month = (month > 1) ? month - 1 : 12;
+          Serial.print("Monat verringert auf: ");
+          Serial.println(month);
+          break;
+        case SET_YEAR:
+          year = (year > 2000) ? year - 1 : 2099;
+          Serial.print("Jahr verringert auf: ");
+          Serial.println(year);
+          break;
+        case SET_HOUR:
+          hour = (hour > 0) ? hour - 1 : 23;
+          Serial.print("Stunde verringert auf: ");
+          Serial.println(hour);
+          break;
+        case SET_MINUTE:
+          minute = (minute > 0) ? minute - 1 : 59;
+          Serial.print("Minute verringert auf: ");
+          Serial.println(minute);
+          break;
+        case SET_SECOND:
+          second = (second > 0) ? second - 1 : 59;
+          Serial.print("Sekunde verringert auf: ");
+          Serial.println(second);
+          break;
+        default:
+          break;
+      }
+      
+      stateChanged = true;
+    }
+    minusButtonPressed = false;
+  }
+  
+  // Display aktualisieren wenn sich etwas geändert hat
+  if (stateChanged) {
+    updateDisplay();
+    stateChanged = false;
   }
 }
 
@@ -268,31 +544,6 @@ void handleMonthChange(bool increase) {
     day = maxDays;
     stateChanged = true;
   }
-}
-
-// Funktion zur Anzeige der Zeit (nur auf dem Zeit-Display)
-void showTime() {
-  displayTime.clearBuffer();
-  
-  DateTime now = rtc.now(); // Direkt vom RTC für Aktualität
-  
-
-  displayTime.setFont(u8g2_font_inb19_mf); // Größere Schrift für die Uhrzeit
-  displayTime.setCursor(5, 30);
-  
-  // Formatieren der Zeit mit führenden Nullen
-  char timeStr[9];
-  sprintf(timeStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
-  displayTime.print(timeStr);
-  
-  displayTime.setFont(u8g2_font_helvB10_tf); // Kleinere Schrift für das Datum
-  displayTime.setCursor(15, 55);
-  
-  char dateStr[16]; 
-  sprintf(dateStr, "%02d.%02d.%04d UTC", now.day(), now.month(), now.year());
-  displayTime.print(dateStr);
-  
-  displayTime.sendBuffer();
 }
 
 // Funktion zur Anzeige der RPM (nur auf dem RPM-Display)
@@ -2084,7 +2335,7 @@ void setup() {
   pinMode(BUTTON_PLUS, INPUT_PULLUP);
   pinMode(BUTTON_MINUS, INPUT_PULLUP);
   pinMode(BUTTON_SET, INPUT_PULLUP);
-  pinMode(IR_SENSOR_PIN, INPUT_PULLUP);
+  pinMode(HALL_SENSOR_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
  
@@ -2106,7 +2357,8 @@ void setup() {
   lastSecondRpmCount = millis();
   Rpm_Count_LastSecond = 0;
   lastOutputTime = millis();
-  attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), Rpm_isr, CHANGE);
+ 
+  attachInterrupt(digitalPinToInterrupt(HALL_SENSOR_PIN), Rpm_isr, FALLING);  
   
   // SET-Taste Interrupt konfigurieren
   attachInterrupt(digitalPinToInterrupt(BUTTON_SET), handleSetButtonInterrupt, FALLING);
@@ -2148,6 +2400,31 @@ void setup() {
   }
 }
 
+// NEU: Funktion zum Schreiben des gesamten Puffers
+bool writeBufferedDataToEEPROM() {
+  for (uint8_t i = 0; i < bufferCount; i++) {
+    uint32_t address = eepromHeader.nextWriteAddress;
+    
+    // Prüfen ob noch Platz im EEPROM ist
+    if (address + sizeof(LogRecord) >= EEPROM_SIZE) {
+      Serial.println("FEHLER: EEPROM voll!");
+      return false;
+    }
+    
+    // Datensatz schreiben
+    writeEEPROMPage(address, (uint8_t*)&dataBuffer[i], sizeof(LogRecord));
+    delay(EEPROM_WRITE_CYCLE);
+    
+    // Header-Zähler aktualisieren
+    eepromHeader.recordCount++;
+    eepromHeader.nextWriteAddress += sizeof(LogRecord);
+  }
+  
+  // Header am Ende nur einmal schreiben
+  writeEEPROMHeader();
+  return true;
+}
+
 void loop() {
   unsigned long currentTime = millis();
   static bool handlingButton = false;
@@ -2185,25 +2462,57 @@ void loop() {
     lastCardCheck = currentTime;
   }
   
-  // RPM berechnen (einmal pro Sekunde)
-  if (currentTime - lastSecondRpmCount >= 1000) {
-    // Speichere die Anzahl der Impulse VOR dem Zurücksetzen
-    unsigned long capturedImpulses = Rpm_Count_LastSecond;
+  // RPM-Berechnung basierend auf der Periodendauer-Messung
+  if (newPulseDetected) {
+    // Intelligente Periodenerkennung mit Pattern-Matching
+    static unsigned long periodBuffer[10] = {0};
+    static uint8_t periodIndex = 0;
+    static unsigned long baselinePeriod = 0;
+
+      // Rohe RPM direkt aus der Periode berechnen
+    float rawRpm = 60.0 * 1000000.0 / pulsePeriod;
+
+    // Aktualisiere den Ring-Puffer
+    periodBuffer[periodIndex] = pulsePeriod;
+    periodIndex = (periodIndex + 1) % 10;
     
-    // Berechnen mit dem korrigierten Wert für RpmTriggerPerRound
-    Rpm = capturedImpulses * 60 / RpmTriggerPerRound;
+    // Ordne die Periode einem der drei bekannten Cluster zu
+    unsigned long normalizedPeriod = pulsePeriod;
+    if (pulsePeriod > 30000 && pulsePeriod < 35000) {
+      // Langer Cluster (~32400) - Periodenverdopplung entfernen
+      normalizedPeriod = pulsePeriod / 2;
+    } else if (pulsePeriod > 20000 && pulsePeriod < 26000) {
+      // Mittlerer Cluster (~24800) - Normalisieren auf 1.5x Basis
+      normalizedPeriod = pulsePeriod / 1.5;
+    }
     
-    // Debug-Ausgabe
-    Serial.print("Erfasste Impulse in der letzten Sekunde: ");
-    Serial.println(capturedImpulses);
-    Serial.print("RPM: ");
-    Serial.println(Rpm);
+    // Berechne tatsächliche RPM aus der normalisierten Periode
+    float normalizedRpm = 60.0 * 1000000.0 / (normalizedPeriod * RpmTriggerPerRound);
     
-    // Jetzt erst zurücksetzen
-    Rpm_Count_LastSecond = 0;
-    Rpm_Count = 0;
-    lastSecondRpmCount = currentTime;
+  
+    // Debug-Ausgaben für alle Zwischenwerte
+    Serial.print("Periode: ");
+    Serial.print(pulsePeriod);
+    Serial.print(" µs, Roh-RPM: ");
+    Serial.print(rawRpm);
+    Serial.print(", Normalisiert: ");
+    Serial.print(normalizedRpm);
+
+    // // Aktualisiere RPM mit starkem Dämpfungsfaktor NUR wenn plausibel
+    // if (abs(normalizedRpm - Rpm) < Rpm * 0.3 || Rpm == 0) {  // Max 30% Änderung oder erste Messung
+    //   Rpm = (Rpm * 0.7) + (normalizedRpm * 0.3);
+    // }
     
+    // Debug-Ausgabe mit Information zur Periode
+    Serial.print("Periode (µs): ");
+    Serial.print(pulsePeriod);
+    Serial.print(", raw RPM: ");
+    Serial.println(rawRpm);
+    
+    newPulseDetected = false;
+
+    Rpm = normalizedRpm;
+
     // Aktualisiere RPM-Display
     displayRPM();
     
@@ -2215,20 +2524,15 @@ void loop() {
         
         // Datums- und Zeitformat mit führenden Nullen: YYYY-MM-DD,HH:MM:SS
         dataFile.print(now.year()); dataFile.print("-");
-        // Führende Nullen für Monat
         if (now.month() < 10) dataFile.print("0");
         dataFile.print(now.month()); dataFile.print("-");
-        // Führende Nullen für Tag
         if (now.day() < 10) dataFile.print("0");
         dataFile.print(now.day()); dataFile.print(",");
         
-        // Führende Nullen für Stunde
         if (now.hour() < 10) dataFile.print("0");
         dataFile.print(now.hour()); dataFile.print(":");
-        // Führende Nullen für Minute
         if (now.minute() < 10) dataFile.print("0");
         dataFile.print(now.minute()); dataFile.print(":");
-        // Führende Nullen für Sekunde
         if (now.second() < 10) dataFile.print("0");
         dataFile.print(now.second()); dataFile.print(",");
         
@@ -2241,101 +2545,34 @@ void loop() {
       }
     }
     
-    // NEU: Daten im Puffer für EEPROM-Schreibvorgang speichern
+    // Daten im Puffer für EEPROM-Schreibvorgang speichern
     if (eepromAvailable && bufferCount < BUFFER_SIZE) {
+      LogRecord newRecord;
       DateTime now = rtc.now();
-      uint32_t timestamp = now.unixtime();
+      newRecord.timestamp = now.unixtime();
+      newRecord.rpm = Rpm;
+      newRecord.temperature = temperature;
       
-      dataBuffer[bufferCount].timestamp = timestamp;
-      dataBuffer[bufferCount].rpm = Rpm;
-      dataBuffer[bufferCount].temperature = (int16_t)(temperature * 100.0f);
+      dataBuffer[bufferIndex] = newRecord;
+      bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
       bufferCount++;
+      
+      // Wenn der Puffer voll ist oder genügend Zeit vergangen ist, auf EEPROM schreiben
+      if (bufferCount >= BUFFER_SIZE || currentTime - lastEEPROMWrite >= EEPROM_WRITE_INTERVAL) {
+        writeBufferedDataToEEPROM();
+      }
     }
   }
-               
-  if (!eepromAvailable) {
-    Serial.println("EEPROM nicht verfügbar, versuche Verifikation...");
-    if (verifyEEPROM()) {
-      Serial.println("EEPROM funktioniert trotz Status!");
-      eepromAvailable = true;
-    }
-  }    
-
-  // NEU: Gepufferte Daten alle 60 Sekunden ins EEPROM schreiben
-  if (eepromAvailable && currentTime - lastMinuteWrite >= MINUTE_INTERVAL && bufferCount > 0) {
-    Serial.print("Schreibe ");
-    Serial.print(bufferCount);
-    Serial.println(" gepufferte Datensätze ins EEPROM...");
-    
-    bool success = writeBufferedDataToEEPROM();
-    if (success) {
-      Serial.println("Gepufferte Daten erfolgreich geschrieben");
-      bufferCount = 0;  // Puffer zurücksetzen
-      lastMinuteWrite = currentTime;
-    } else {
-      Serial.println("Fehler beim Schreiben der gepufferten Daten!");
-    }
-  }
-
-  // Zeit-Display alle Sekunde aktualisieren
+  
+  // Zeit auf dem Display aktualisieren (alle 1 Sekunde)
   if (currentTime - lastTimeUpdate >= 1000) {
-    if (sdCardAvailable) {
-      updateTimeFromRTC();
-      showTime();
-    } else {
-      displayNoCard();
-    }
+    updateTimeFromRTC();
     lastTimeUpdate = currentTime;
   }
-  
-  // Überprüfen, ob die SET-Taste gedrückt wurde
-  if (buttonPressed && !handlingButton) {
-    handlingButton = true; // Flag setzen
-    buttonPressed = false;
-    delay(200); // Entprellung
-    setupRTCWithButtons();
-    
-    // Nach dem Setup beide Displays neu zeichnen
-    updateTimeFromRTC();
-    showTime();
-    displayRPM();
-    
-    delay(1000); // Längere Verzögerung nach dem Setup
-    
-    // Stelle sicher, dass keine Taste gedrückt ist
-    while(digitalRead(BUTTON_SET) == LOW) {
-      delay(10);
-    }
-    
-    // Reset buttonPressed explizit nochmal
-    buttonPressed = false;
-    handlingButton = false; // Flag zurücksetzen
-  }
-    // Verarbeite serielle Befehle (für USB-Download und EEPROM-Verwaltung)
-  handleSerialCommands();
-}
 
-// NEU: Funktion zum Schreiben des gesamten Puffers
-bool writeBufferedDataToEEPROM() {
-  for (uint8_t i = 0; i < bufferCount; i++) {
-    uint32_t address = eepromHeader.nextWriteAddress;
-    
-    // Prüfen ob noch Platz im EEPROM ist
-    if (address + sizeof(LogRecord) >= EEPROM_SIZE) {
-      Serial.println("FEHLER: EEPROM voll!");
-      return false;
-    }
-    
-    // Datensatz schreiben
-    writeEEPROMPage(address, (uint8_t*)&dataBuffer[i], sizeof(LogRecord));
-    delay(EEPROM_WRITE_CYCLE);
-    
-    // Header-Zähler aktualisieren
-    eepromHeader.recordCount++;
-    eepromHeader.nextWriteAddress += sizeof(LogRecord);
-  }
+  // Button-Handling für Setup-Modi
+  handleButtons(currentTime);
   
-  // Header am Ende nur einmal schreiben
-  writeEEPROMHeader();
-  return true;
+  // Serielle Befehle verarbeiten
+  handleSerialCommands();
 }
