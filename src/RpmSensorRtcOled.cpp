@@ -166,6 +166,7 @@ void writeEEPROMHeader();
 void handleButtons(unsigned long currentTime);
 void updateDisplay();
 void displaySetValue(const char* label, int value);
+void updateTimeFromRTC();
 
 // Interrupt-Handler für SET, PLUS und MINUS Tasten
 void IRAM_ATTR buttonInterrupt() {
@@ -259,11 +260,18 @@ void displaySetValue(const char* label, int value) {
 }
 
 // Diese Funktion aktualisiert die Anzeige je nach aktuellem Zustand
-void updateDisplay() {
-  // Je nach aktuellem Zustand das Display aktualisieren
+void updateDisplay() {  
+  // Diese statische Variable stellt sicher, dass updateTimeFromRTC() nicht
+  // sofort nach einer Zeiteinstellung aufgerufen wird
+  static unsigned long lastTimeSetMillis = 0;
+
   switch (currentState) {
     case NORMAL:
-      showTime(); // Diese Funktion sollte bereits in deinem Code existieren
+      // Im Normalmodus die aktuelle RTC-Zeit anzeigen, aber nicht direkt nach einer Einstellung
+      if (millis() - lastTimeSetMillis > 3000) { // 3 Sekunden warten
+        updateTimeFromRTC();
+      }
+      showTime();
       break;
     case SET_DAY:
       displaySetValue("Tag", day);
@@ -284,15 +292,23 @@ void updateDisplay() {
       displaySetValue("Sekunde", second);
       break;
   }
+    // Nach SET_SECOND speichern wir den Zeitpunkt
+  if (currentState == SET_SECOND) {
+    lastTimeSetMillis = millis();
+  }
+
 }
 
 void handleButtons(unsigned long currentTime) {
-  static unsigned long lastButtonPressTime = 0;
+  // static unsigned long lastButtonPressTime = 0;
   const unsigned long DEBOUNCE_DELAY = 200;
   static bool lastButtonPressed = false;
   static bool lastPlusButtonPressed = false;
   static bool lastMinusButtonPressed = false;
   static unsigned long lastDebugOutput = 0;
+  static unsigned long lastSetButtonTime = 0;
+  static unsigned long lastPlusButtonTime = 0;
+  static unsigned long lastMinusButtonTime = 0;
   
   // Ausgabe nur bei Änderung oder alle 5 Sekunden
   if (lastButtonPressed != buttonPressed || 
@@ -315,16 +331,31 @@ void handleButtons(unsigned long currentTime) {
 
   // SET-Taste gedrückt
   if (buttonPressed) {
-    if (currentTime - lastButtonPressTime > DEBOUNCE_DELAY) {
-      lastButtonPressTime = currentTime;
+    if (currentTime - lastSetButtonTime > DEBOUNCE_DELAY) {
+      lastSetButtonTime = currentTime;
       
+      DateTime now;
+
       // SET-Taste wechselt zum nächsten Zustand
       switch (currentState) {
         case NORMAL:
           currentState = SET_DAY;
+          
+          // Aktuelle Zeit für die Einstellung übernehmen - NUR EINMAL beim Eintritt
+          now = rtc.now();
+          day = now.day();
+          month = now.month();
+          year = now.year();
+          hour = now.hour();
+          minute = now.minute();
+          second = now.second();
+          
+          Serial.println("Zeit-Einstellung gestartet - aktuelle RTC Zeit übernommen");
           break;
+          
         case SET_DAY:
           currentState = SET_MONTH;
+          Serial.println("Wechsel zu Monat-Einstellung");
           break;
         case SET_MONTH:
           currentState = SET_YEAR;
@@ -341,10 +372,35 @@ void handleButtons(unsigned long currentTime) {
         case SET_SECOND:
           // Wichtig: Zurück zum NORMAL-Modus
           currentState = NORMAL;
-          
+          // Debug: Zeige Werte vor der Anpassung
+          Serial.print("Setze RTC auf: ");
+          Serial.print(year); Serial.print("-");
+          Serial.print(month); Serial.print("-");
+          Serial.print(day); Serial.print(" ");
+          Serial.print(hour); Serial.print(":");
+          Serial.print(minute); Serial.print(":");
+          Serial.println(second);
           // Zeit im RTC aktualisieren
           rtc.adjust(DateTime(year, month, day, hour, minute, second));
-          Serial.println("Zeit gesetzt, zurück zu NORMAL");
+
+                  
+          // // Sofort prüfen, ob die Zeit gesetzt wurde
+          // delay(100); // Kurze Pause für den RTC
+          // now = rtc.now();
+          // Serial.print("RTC-Zeit nach Einstellung: ");
+          // Serial.print(now.year()); Serial.print("-");
+          // Serial.print(now.month()); Serial.print("-");
+          // Serial.print(now.day()); Serial.print(" ");
+          // Serial.print(now.hour()); Serial.print(":");
+          // Serial.print(now.minute()); Serial.print(":");
+          // Serial.println(now.second());
+          
+          // // Lokale Zeit mit der eingestellten Zeit synchronisieren
+          // hour = now.hour();
+          // minute = now.minute();
+          // second = now.second();
+
+          // Serial.println("Zeit gesetzt, zurück zu NORMAL");
           break;
       }
       
@@ -355,8 +411,8 @@ void handleButtons(unsigned long currentTime) {
   
   // PLUS-Taste gedrückt
   if (plusButtonPressed) {
-    if (currentTime - lastButtonPressTime > DEBOUNCE_DELAY) {
-      lastButtonPressTime = currentTime;
+    if (currentTime - lastPlusButtonTime > DEBOUNCE_DELAY) {
+      lastPlusButtonTime = currentTime;
       
       Serial.println("PLUS Button gedrückt!");
       
@@ -403,8 +459,8 @@ void handleButtons(unsigned long currentTime) {
   
   // MINUS-Taste gedrückt
   if (minusButtonPressed) {
-    if (currentTime - lastButtonPressTime > DEBOUNCE_DELAY) {
-      lastButtonPressTime = currentTime;
+    if (currentTime - lastMinusButtonTime > DEBOUNCE_DELAY) {
+      lastMinusButtonTime = currentTime;
       
       Serial.println("MINUS Button gedrückt!");
       
@@ -2604,7 +2660,15 @@ if (currentTime - lastCardCheck >= 3000) {
   
   // Zeit auf dem Display aktualisieren (alle 1 Sekunde)
   if (currentTime - lastTimeUpdate >= 1000) {
-    updateTimeFromRTC();
+    // NUR im NORMAL-Modus die Zeit aus der RTC aktualisieren
+    if (currentState == NORMAL) {
+      updateTimeFromRTC();
+      
+      // Zeit-Display aktualisieren, wenn im NORMAL-Modus und SD-Karte verfügbar
+      if (sdCardAvailable) {
+        showTime();
+      }
+    }
     lastTimeUpdate = currentTime;
   }
 
