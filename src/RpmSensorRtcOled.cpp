@@ -289,14 +289,29 @@ void updateDisplay() {
 void handleButtons(unsigned long currentTime) {
   static unsigned long lastButtonPressTime = 0;
   const unsigned long DEBOUNCE_DELAY = 200;
- 
-  Serial.print("Button-Status: SET=");
-  Serial.print(buttonPressed);
-  Serial.print(", PLUS=");
-  Serial.print(plusButtonPressed);
-  Serial.print(", MINUS=");
-  Serial.println(minusButtonPressed);
-
+  static bool lastButtonPressed = false;
+  static bool lastPlusButtonPressed = false;
+  static bool lastMinusButtonPressed = false;
+  static unsigned long lastDebugOutput = 0;
+  
+  // Ausgabe nur bei Änderung oder alle 5 Sekunden
+  if (lastButtonPressed != buttonPressed || 
+      lastPlusButtonPressed != plusButtonPressed ||
+      lastMinusButtonPressed != minusButtonPressed ||
+      currentTime - lastDebugOutput > 5000) {
+      
+    Serial.print("Button-Status: SET=");
+    Serial.print(buttonPressed);
+    Serial.print(", PLUS=");
+    Serial.print(plusButtonPressed);
+    Serial.print(", MINUS=");
+    Serial.println(minusButtonPressed);
+    
+    lastButtonPressed = buttonPressed;
+    lastPlusButtonPressed = plusButtonPressed;
+    lastMinusButtonPressed = minusButtonPressed;
+    lastDebugOutput = currentTime;
+  }
 
   // SET-Taste gedrückt
   if (buttonPressed) {
@@ -2379,7 +2394,11 @@ void setup() {
   
   // Initialisiere die Anzeigen
   updateTimeFromRTC();
-  showTime();
+  if (sdCardAvailable) {
+    showTime();
+  } else {
+    displayNoCard();
+  }
   displayRPM();
   
   Serial.println("Setup abgeschlossen");
@@ -2429,6 +2448,7 @@ void loop() {
   static unsigned long lastCardCheck = 0;
   static unsigned long lastTimeUpdate = 0;
 
+
   // Sicherstellen, dass EEPROM immer verfügbar ist
   static bool firstRun = true;
   if (firstRun) {
@@ -2440,24 +2460,45 @@ void loop() {
   // Temperatur vom RTC-Modul auslesen
   float temperature = rtc.getTemperature();
   
-  // SD-Karten-Status regelmäßig überprüfen (alle 3 Sekunden)
-  if (currentTime - lastCardCheck >= 3000) {
-    bool previousState = sdCardAvailable;
-    sdCardAvailable = checkSDCard();
-    
-    // Status hat sich geändert - aktualisiere Display entsprechend
-    if (previousState != sdCardAvailable) {
-      if (sdCardAvailable) {
-        // Karte wurde eingesteckt
-        showTime();
-      } else {
-        // Karte wurde entfernt
-        displayNoCard();
+// SD-Karten-Status regelmäßig überprüfen (alle 3 Sekunden)
+if (currentTime - lastCardCheck >= 3000) {
+  bool previousState = sdCardAvailable;
+  sdCardAvailable = checkSDCard();
+  
+  // Status hat sich geändert - aktualisiere Display entsprechend
+  if (previousState != sdCardAvailable) {
+    if (sdCardAvailable) {
+      // NEUER CODE: Karte wurde während des Betriebs eingesteckt
+      Serial.println("SD-Karte während des Betriebs eingesteckt");
+      
+      // Neuen Dateinamen generieren
+      currentLogFileName = getNextFileName();
+      Serial.print("Neuer Log-Dateiname: ");
+      Serial.println(currentLogFileName);
+      
+      // Log-Header schreiben
+      File dataFile = SD.open(currentLogFileName, FILE_WRITE);
+      if (dataFile) {
+        dataFile.println("Date,UTC,RPM,Temperatur");
+        dataFile.close();
+        Serial.println("Neuer Log-Header geschrieben");
       }
+      
+      // Karte wurde eingesteckt - Zeit anzeigen
+      showTime();
+    } else {
+      // Karte wurde entfernt
+      displayNoCard();
     }
-    
-    lastCardCheck = currentTime;
+  } else {
+    // Stelle sicher, dass NO CARD angezeigt wird
+    if (!sdCardAvailable && currentTime - lastTimeUpdate >= 1000) {
+      displayNoCard(); // Regelmäßig NO CARD anzeigen, wenn keine Karte vorhanden
+    }
   }
+  
+  lastCardCheck = currentTime;
+}
   
   // RPM-Berechnung basierend auf der Periodendauer-Messung
   if (newPulseDetected) {
