@@ -28,9 +28,9 @@
 #define SD_CS 5 // SD-Karte Chip Select Pin
 
 // Pin-Definitionen
-#define BUTTON_PLUS 32  // GPIO für die "+"-Taste
-#define BUTTON_MINUS 33 // GPIO für die "-"-Tastekkxxgbggf
-#define BUTTON_SET 27   // GPIO für die "SET"-Taste
+#define BUTTON_PLUS 25  // GPIO für die "+"-Taste blau
+#define BUTTON_MINUS 26 // GPIO für die "-"-Tastekkxxgbggf weiss 
+#define BUTTON_SET 27   // GPIO für die "SET"-Taste gelb
 
 // Neue Konstante für genauere RPM-Messung
 #define RpmTriggerPerRound 1 // 1 Impulse pro Umdrehung für präzisere Messung
@@ -201,9 +201,6 @@ void setupButtons() {
   // Neue Code für PLUS und MINUS Tasten
   pinMode(BUTTON_PLUS, INPUT_PULLUP);
   pinMode(BUTTON_MINUS, INPUT_PULLUP);
-  
-  attachInterrupt(digitalPinToInterrupt(BUTTON_PLUS), plusButtonInterrupt, FALLING);
-  attachInterrupt(digitalPinToInterrupt(BUTTON_MINUS), minusButtonInterrupt, FALLING);
 
   Serial.println("Buttons konfiguriert!");
   Serial.print("SET: GPIO ");
@@ -2568,6 +2565,23 @@ void loop() {
   if (currentTime - lastTimeUpdate >= 1000) {
     updateTimeFromRTC();
     lastTimeUpdate = currentTime;
+  }
+
+  // Direktes Polling der PLUS/MINUS Tasten
+  static unsigned long lastButtonCheck = 0;
+  if (currentTime - lastButtonCheck > 50) { // Alle 50ms prüfen
+    lastButtonCheck = currentTime;
+    
+    // Direktes Lesen der Tasten (LOW = gedrückt bei Pull-up)
+    if (digitalRead(BUTTON_PLUS) == LOW) {
+      plusButtonPressed = true;
+      Serial.println("PLUS-Taste gedrückt (Polling)");
+    }
+    
+    if (digitalRead(BUTTON_MINUS) == LOW) {
+      minusButtonPressed = true;
+      Serial.println("MINUS-Taste gedrückt (Polling)");
+    }
   }
 
   // Button-Handling für Setup-Modi
