@@ -1254,36 +1254,31 @@ bool recoveryI2CForEEPROMDownload() {
 void downloadEEPROMDataToUSB() {
   Serial.println("EEPROM-Daten-Download startet...");
   
-  // Downloads können bei aktivem Display fehlschlagen
-  // Display-Status temporär speichern
-  displayTime.setPowerSave(1);  // Displays ausschalten während des Downloads
+  // Displays ausschalten während des Downloads
+  displayTime.setPowerSave(1);
   displayRpm.setPowerSave(1);
   delay(50);
   
-  // I2C-Bus vollständig zurücksetzen und für EEPROM optimieren
+  // I2C-Bus zurücksetzen und für EEPROM optimieren
   if (!recoveryI2CForEEPROMDownload()) {
     Serial.println("EEPROM-Wiederherstellung fehlgeschlagen!");
     
-    // Versuch mit extrem aggressivem Reset
+    // Aggressiver Reset-Versuch
     Wire1.end();
     delay(500);
-    
-    pinMode(SDA_PIN, INPUT_PULLUP);  // Sicherstellen, dass Pullups aktiv sind
-    pinMode(SCL_PIN, INPUT_PULLUP);
+    pinMode(SDA_PIN_EEPROM, INPUT_PULLUP); // EEPROM-Pins statt SDA_PIN verwenden!
+    pinMode(SCL_PIN_EEPROM, INPUT_PULLUP); // EEPROM-Pins statt SCL_PIN verwenden!
     delay(100);
-    
-    Wire1.begin(SDA_PIN, SCL_PIN);
-    Wire1.setClock(1000);  // Extrem langsame 1 kHz
+    Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM); // EEPROM-Pins verwenden!
+    Wire1.setClock(1000);  // Extrem langsam
     delay(200);
     
-    // Letzter Versuch
+    // Letzter Verbindungstest
     Wire1.beginTransmission(EEPROM_ADDRESS);
     byte error = Wire1.endTransmission();
     
     if (error != 0) {
-      Serial.println("EEPROM ist nicht erreichbar - Download nicht möglich.");
-      
-      // Displays wieder aktivieren und Funktion verlassen
+      Serial.println("EEPROM nicht erreichbar - Download abgebrochen.");
       displayTime.setPowerSave(0);
       displayRpm.setPowerSave(0);
       delay(100);
@@ -1292,20 +1287,18 @@ void downloadEEPROMDataToUSB() {
       return;
     }
     
-    Serial.println("EEPROM nach aggressivem Reset wiederhergestellt.");
+    Serial.println("EEPROM nach Reset wiederhergestellt.");
   }
   
   // CSV-Header
   Serial.println("timestamp,rpm,temperature");
   
-  // EEPROM-Header lesen
-  // Hier einzelne Bytes separat lesen, nicht die ganze Struktur
+  // EEPROM-Header separat lesen
   uint32_t recordCount = 0;
-  
   for (uint8_t i = 0; i < 4; i++) {
     Wire1.beginTransmission(EEPROM_ADDRESS);
-    Wire1.write(0);  // MSB (Adresse 0)
-    Wire1.write(i);  // LSB (Bytes 0-3)
+    Wire1.write(0);  // MSB
+    Wire1.write(i);  // LSB
     
     if (Wire1.endTransmission() != 0) {
       Serial.println("Fehler beim Setzen der Leseadresse");
@@ -1327,55 +1320,52 @@ void downloadEEPROMDataToUSB() {
     delay(5);
   }
   
-  Serial.print("Gelesene Datensatzanzahl: ");
+  Serial.print("Datensatzanzahl: ");
   Serial.println(recordCount);
   
   // Plausibilitätsprüfung
   if (recordCount > 10000) {
     Serial.println("Unplausible Datensatzanzahl - beschränke auf 100");
-    recordCount = 100;  // Sicherheitsbegrenzung
+    recordCount = 100;
   }
   
-  // Einzelne Datensätze lesen
-  for (uint32_t i = 0; i < recordCount; i++) {
-    // Langsamer fortschreiten und Pausen einlegen
+  // WICHTIGE ÄNDERUNG: Nur die letzten 100 Datensätze laden
+  uint32_t startIndex = 0;
+  if (recordCount > 1000) {
+    startIndex = recordCount - 100;
+    Serial.print("Zeige nur die letzten 100 von ");
+    Serial.print(recordCount);
+    Serial.println(" Datensätzen");
+  }
+  
+  // Datensätze lesen - startIndex VERHINDERT Wiederholungen
+  for (uint32_t i = startIndex; i < recordCount; i++) {
     if (i % 5 == 0) {
-      // Serial.print("Lese Datensatz ");
-      // Serial.print(i);
-      // Serial.print(" von ");
-      // Serial.println(recordCount);
-      delay(100);  // Längere Pause alle 5 Datensätze
+      delay(100);  // Pause alle 5 Datensätze
     }
     
-    // Adresse des Datensatzes berechnen
     uint32_t recordAddress = sizeof(EEPROMHeader) + (i * sizeof(LogRecord));
     
     // Datensatz byte-weise lesen
     LogRecord record;
-    memset(&record, 0, sizeof(record));  // Mit 0 initialisieren
+    memset(&record, 0, sizeof(record));
     bool readSuccess = true;
     
     for (uint8_t byteIdx = 0; byteIdx < sizeof(LogRecord); byteIdx++) {
       uint32_t byteAddress = recordAddress + byteIdx;
       
-      // Adresse setzen
       Wire1.beginTransmission(EEPROM_ADDRESS);
-      Wire1.write((byteAddress >> 8) & 0xFF);  // MSB
-      Wire1.write(byteAddress & 0xFF);         // LSB
+      Wire1.write((byteAddress >> 8) & 0xFF);
+      Wire1.write(byteAddress & 0xFF);
       
       if (Wire1.endTransmission() != 0) {
-        Serial.print("Fehler beim Setzen der Adresse für Byte ");
-        Serial.println(byteIdx);
         readSuccess = false;
         break;
       }
       
-      delay(2);  // Kurze Pause zwischen Operationen
+      delay(2);
       
-      // Byte lesen
       if (Wire1.requestFrom(EEPROM_ADDRESS, 1) != 1) {
-        Serial.print("Fehler beim Lesen von Byte ");
-        Serial.println(byteIdx);
         readSuccess = false;
         break;
       }
@@ -1387,32 +1377,28 @@ void downloadEEPROMDataToUSB() {
         break;
       }
       
-      delay(2);  // Kurze Pause zwischen Bytes
+      delay(2);
     }
     
     if (!readSuccess) {
       Serial.print("Fehler beim Lesen des Datensatzes ");
       Serial.println(i);
       
-      // I2C-Bus zurücksetzen und erneut versuchen
       Wire1.end();
       delay(50);
-      Wire1.begin(SDA_PIN, SCL_PIN);
+      Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
       Wire1.setClock(5000);
       delay(100);
       
-      continue;  // Nächsten Datensatz versuchen
-    }
-    
-    // Plausibilitätsprüfung des Datensatzes
-    if (record.timestamp < 1609459200 || record.timestamp > 1893456000) {
-      // Timestamp zwischen 01.01.2021 und 01.01.2030
-      Serial.print("Ungültiger Timestamp in Datensatz ");
-      Serial.println(i);
       continue;
     }
     
-    // Daten im CSV-Format ausgeben
+    // Plausibilitätsprüfung (Timestamp zwischen 2021-2030)
+    if (record.timestamp < 1609459200 || record.timestamp > 1893456000) {
+      continue;
+    }
+    
+    // Ausgabe im CSV-Format
     time_t rawtime = record.timestamp;
     struct tm * timeinfo = gmtime(&rawtime);
     
@@ -1427,7 +1413,7 @@ void downloadEEPROMDataToUSB() {
     Serial.print(",");
     Serial.println(record.temperature / 100.0f, 2);
     
-    // Auf Abbruchbefehl prüfen
+    // Auf Abbruch prüfen
     if (Serial.available() && Serial.read() == 'q') {
       Serial.println("Download abgebrochen.");
       break;
@@ -1436,10 +1422,10 @@ void downloadEEPROMDataToUSB() {
   
   Serial.println("EEPROM-Daten-Download abgeschlossen.");
   
-  // I2C-Bus für normale Operationen wiederherstellen
+  // I2C-Bus wiederherstellen
   Wire1.end();
   delay(100);
-  Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);  // Korrigiert: EEPROM-Pins verwenden
+  Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
   Wire1.setClock(100000);
   delay(100);
   
@@ -1447,8 +1433,6 @@ void downloadEEPROMDataToUSB() {
   displayTime.setPowerSave(0);
   displayRpm.setPowerSave(0);
   delay(100);
-  
-  // Displays aktualisieren
   showTime();
   displayRPM();
 }
