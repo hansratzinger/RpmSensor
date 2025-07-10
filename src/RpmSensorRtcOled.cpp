@@ -32,13 +32,10 @@
 #define BUTTON_MINUS 26 // GPIO für die "-"-Tastekkxxgbggf weiss 
 #define BUTTON_SET 27   // GPIO für die "SET"-Taste gelb
 
-// Neue Konstante für genauere RPM-Messung
-#define RpmTriggerPerRound 1 // 1 Impulse pro Umdrehung für präzisere Messung
-
 #define LED_PIN 12      // GPIO12: Kontroll-LED Pin
 
 #define HALL_SENSOR_PIN 15  // GPIO-Pin für den Hall-Sensor
-#define RpmTriggerPerRound 1  // 1 Magnete = 2 Impulse pro Umdrehung
+#define RpmTriggerPerRound 4  // 4 Magnete = 4 Impulse pro Umdrehung
 
 // I2C Pins für den Haupt-Bus (Displays, RTC) / I2C-1
 #define SDA_PIN 21
@@ -184,10 +181,18 @@ void IRAM_ATTR minusButtonInterrupt() {
 void IRAM_ATTR Rpm_isr() {
   static unsigned long lastInterruptTime = 0;
   unsigned long interruptTime = micros();
-  unsigned long interval = interruptTime - lastInterruptTime;
   
-  // Entprellung (2ms sollte für diesen Sensor ausreichen)
-  if (interval > 2000) {
+  // WICHTIG: Zunächst IMMER den Zähler inkrementieren
+  pulseCount++;
+  
+  // Blinken zur Bestätigung (MUSS kurz sein)
+  digitalWrite(LED_PIN, HIGH);
+  delayMicroseconds(50);
+  digitalWrite(LED_PIN, LOW);
+  
+  // Vereinfachte Logik ohne strenge Filterung
+  unsigned long interval = interruptTime - lastInterruptTime;
+  if (interval > 100) { // Minimaler Entprellschutz
     pulsePeriod = interval;
     lastInterruptTime = interruptTime;
     newPulseDetected = true;
@@ -2426,7 +2431,12 @@ void setup() {
   Rpm_Count_LastSecond = 0;
   lastOutputTime = millis();
  
-  attachInterrupt(digitalPinToInterrupt(HALL_SENSOR_PIN), Rpm_isr, FALLING);  
+  // attachInterrupt(digitalPinToInterrupt(HALL_SENSOR_PIN), Rpm_isr, FALLING);  
+  attachInterrupt(digitalPinToInterrupt(HALL_SENSOR_PIN), Rpm_isr, CHANGE);  
+  // Zusätzlich Debug-Ausgabe hinzufügen
+  Serial.print("RPM-Interrupt auf Pin ");
+  Serial.print(HALL_SENSOR_PIN);
+  Serial.println(" konfiguriert (CHANGE-Modus)");
   
   // SET-Taste Interrupt konfigurieren
   attachInterrupt(digitalPinToInterrupt(BUTTON_SET), handleSetButtonInterrupt, FALLING);
@@ -2504,6 +2514,13 @@ void loop() {
   static unsigned long lastCardCheck = 0;
   static unsigned long lastTimeUpdate = 0;
 
+  static unsigned long lastDebugOutput = 0;
+  if (currentTime - lastDebugOutput > 1000) {
+    lastDebugOutput = currentTime;
+    Serial.print("DEBUG: Pulses detected in last second: ");
+    Serial.println(pulseCount);
+    pulseCount = 0; // Reset counter
+  }
 
   // Sicherstellen, dass EEPROM immer verfügbar ist
   static bool firstRun = true;
@@ -2570,44 +2587,31 @@ if (currentTime - lastCardCheck >= 3000) {
     periodBuffer[periodIndex] = pulsePeriod;
     periodIndex = (periodIndex + 1) % 10;
     
-    // Ordne die Periode einem der drei bekannten Cluster zu
     unsigned long normalizedPeriod = pulsePeriod;
-    if (pulsePeriod > 30000 && pulsePeriod < 35000) {
-      // Langer Cluster (~32400) - Periodenverdopplung entfernen
-      normalizedPeriod = pulsePeriod / 2;
-    } else if (pulsePeriod > 20000 && pulsePeriod < 26000) {
-      // Mittlerer Cluster (~24800) - Normalisieren auf 1.5x Basis
-      normalizedPeriod = pulsePeriod / 1.5;
+    // Direktberechnung ohne Cluster-Normalisierung
+    
+    // RPM direkt aus der Periode berechnen mit korrektem RpmTriggerPerRound-Wert
+    float calculatedRpm = 60.0 * 1000000.0 / (normalizedPeriod * RpmTriggerPerRound);
+    
+    // Plausibilitätsprüfung für 2000-3000 RPM Bereich
+    if (calculatedRpm >= 1500.0 && calculatedRpm <= 3500.0) {
+      // Gleitender Durchschnitt für stabilere Werte (70% alter Wert + 30% neuer Wert)
+      Rpm = (Rpm * 0.7) + (calculatedRpm * 0.3);
+    } else if (calculatedRpm >= 500.0 && calculatedRpm <= 5000.0) {
+      // Weniger Einfluss bei Werten außerhalb des Hauptbereichs
+      Rpm = (Rpm * 0.9) + (calculatedRpm * 0.1);
     }
     
-    // Berechne tatsächliche RPM aus der normalisierten Periode
-    float normalizedRpm = 60.0 * 1000000.0 / (normalizedPeriod * RpmTriggerPerRound);
-    
-  
-    // Debug-Ausgaben für alle Zwischenwerte
+    // Debug-Ausgabe
     Serial.print("Periode: ");
     Serial.print(pulsePeriod);
-    Serial.print(" µs, Roh-RPM: ");
-    Serial.print(rawRpm);
-    Serial.print(", Normalisiert: ");
-    Serial.print(normalizedRpm);
-
-    // // Aktualisiere RPM mit starkem Dämpfungsfaktor NUR wenn plausibel
-    // if (abs(normalizedRpm - Rpm) < Rpm * 0.3 || Rpm == 0) {  // Max 30% Änderung oder erste Messung
-    //   Rpm = (Rpm * 0.7) + (normalizedRpm * 0.3);
-    // }
+    Serial.print(" µs, Berechnete RPM: ");
+    Serial.print(calculatedRpm);
+    Serial.print(", Gefilterte RPM: ");
+    Serial.println(Rpm);
     
-    // Debug-Ausgabe mit Information zur Periode
-    Serial.print("Periode (µs): ");
-    Serial.print(pulsePeriod);
-    Serial.print(", raw RPM: ");
-    Serial.println(rawRpm);
-    
+    // Flag zurücksetzen und Display aktualisieren
     newPulseDetected = false;
-
-    Rpm = normalizedRpm;
-
-    // Aktualisiere RPM-Display
     displayRPM();
     
     // Logge die Daten auf die SD-Karte nur wenn sie verfügbar ist
@@ -2654,6 +2658,35 @@ if (currentTime - lastCardCheck >= 3000) {
       // Wenn der Puffer voll ist oder genügend Zeit vergangen ist, auf EEPROM schreiben
       if (bufferCount >= BUFFER_SIZE || currentTime - lastEEPROMWrite >= EEPROM_WRITE_INTERVAL) {
         writeBufferedDataToEEPROM();
+      }
+    }
+  }
+    // RPM automatisch zurücksetzen, wenn keine Impulse mehr kommen
+  static unsigned long lastPulseTime = 0;
+  if (newPulseDetected) {
+    lastPulseTime = currentTime;
+  } else if (currentTime - lastPulseTime > 2000 && Rpm > 0) {
+    // Nach 2 Sekunden ohne Impulse RPM auf 0 setzen
+    Serial.println("Keine Impulse mehr erkannt - Motor wahrscheinlich gestoppt");
+    Rpm = 0;
+    displayRPM();
+    
+    // Optional: Status auf SD-Karte und EEPROM loggen
+    if (sdCardAvailable) {
+      File dataFile = SD.open(currentLogFileName, FILE_APPEND);
+      if (dataFile) {
+        DateTime now = rtc.now();
+        
+        // Formatierter Zeitstempel
+        char timeStr[30];
+        sprintf(timeStr, "%04d-%02d-%02d,%02d:%02d:%02d",
+            now.year(), now.month(), now.day(), 
+            now.hour(), now.minute(), now.second());
+        
+        dataFile.print(timeStr);
+        dataFile.print(",0,"); // RPM = 0
+        dataFile.println(temperature);
+        dataFile.close();
       }
     }
   }
