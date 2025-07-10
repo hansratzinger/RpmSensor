@@ -2513,8 +2513,23 @@ void loop() {
   static int lastRpm = -1;
   static unsigned long lastCardCheck = 0;
   static unsigned long lastTimeUpdate = 0;
-
   static unsigned long lastDebugOutput = 0;
+
+  static int lastPinState = -1;
+  int currentPinState = digitalRead(HALL_SENSOR_PIN);
+
+  if (currentPinState != lastPinState) {
+    Serial.print("Hall-Sensor Pin-Status geändert: ");
+    Serial.println(currentPinState ? "HIGH" : "LOW");
+    lastPinState = currentPinState;
+    
+    // Manuelles Trigger-Test
+    if (currentPinState == LOW) {
+      Serial.println("Manueller Impuls erkannt!");
+      pulseCount++;
+    }
+  }
+  
   if (currentTime - lastDebugOutput > 1000) {
     lastDebugOutput = currentTime;
     Serial.print("DEBUG: Pulses detected in last second: ");
