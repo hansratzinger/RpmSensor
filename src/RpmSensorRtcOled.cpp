@@ -181,21 +181,19 @@ void IRAM_ATTR minusButtonInterrupt() {
 void IRAM_ATTR Rpm_isr() {
   static unsigned long lastInterruptTime = 0;
   unsigned long interruptTime = micros();
-  
-  // WICHTIG: Zunächst IMMER den Zähler inkrementieren
-  pulseCount++;
-  
-  // Blinken zur Bestätigung (MUSS kurz sein)
-  digitalWrite(LED_PIN, HIGH);
-  delayMicroseconds(50);
-  digitalWrite(LED_PIN, LOW);
-  
-  // Vereinfachte Logik ohne strenge Filterung
   unsigned long interval = interruptTime - lastInterruptTime;
-  if (interval > 100) { // Minimaler Entprellschutz
+  
+  // Entprellung: 3000 μs 
+  if (interval > 3000) { // Min. 5ms zwischen Impulsen (entspricht max 12000 RPM)
+    pulseCount = pulseCount + 1;
     pulsePeriod = interval;
     lastInterruptTime = interruptTime;
     newPulseDetected = true;
+    
+    // Kurzer LED-Blink für visuelle Bestätigung
+    digitalWrite(LED_PIN, HIGH);
+    delayMicroseconds(50);
+    digitalWrite(LED_PIN, LOW);
   }
 }
 
@@ -2415,8 +2413,8 @@ void setup() {
   Rpm_Count_LastSecond = 0;
   lastOutputTime = millis();
  
-  // attachInterrupt(digitalPinToInterrupt(HALL_SENSOR_PIN), Rpm_isr, FALLING);  
-  attachInterrupt(digitalPinToInterrupt(HALL_SENSOR_PIN), Rpm_isr, CHANGE);  
+  attachInterrupt(digitalPinToInterrupt(HALL_SENSOR_PIN), Rpm_isr, FALLING);  
+  // attachInterrupt(digitalPinToInterrupt(HALL_SENSOR_PIN), Rpm_isr, CHANGE);  
   // Zusätzlich Debug-Ausgabe hinzufügen
   Serial.print("RPM-Interrupt auf Pin ");
   Serial.print(HALL_SENSOR_PIN);
@@ -2510,7 +2508,7 @@ void loop() {
     // Manuelles Trigger-Test
     if (currentPinState == LOW) {
       Serial.println("Manueller Impuls erkannt!");
-      pulseCount++;
+      pulseCount = pulseCount + 1;
     }
   }
   
