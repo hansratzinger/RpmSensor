@@ -1332,8 +1332,8 @@ void downloadEEPROMDataToUSB() {
   // WICHTIGE ÄNDERUNG: Nur die letzten 100 Datensätze laden
   uint32_t startIndex = 0;
   if (recordCount > 1000) {
-    startIndex = recordCount - 100;
-    Serial.print("Zeige nur die letzten 100 von ");
+    startIndex = recordCount - 1000;
+    Serial.print("Zeige nur die letzten 1000 von ");
     Serial.print(recordCount);
     Serial.println(" Datensätzen");
   }
@@ -2572,46 +2572,60 @@ if (currentTime - lastCardCheck >= 3000) {
   lastCardCheck = currentTime;
 }
   
-  // RPM-Berechnung basierend auf der Periodendauer-Messung
+    // RPM-Berechnung
+    // 
   if (newPulseDetected) {
-    // Intelligente Periodenerkennung mit Pattern-Matching
-    static unsigned long periodBuffer[10] = {0};
-    static uint8_t periodIndex = 0;
-    static unsigned long baselinePeriod = 0;
-
-      // Rohe RPM direkt aus der Periode berechnen
-    float rawRpm = 60.0 * 1000000.0 / pulsePeriod;
-
-    // Aktualisiere den Ring-Puffer
-    periodBuffer[periodIndex] = pulsePeriod;
-    periodIndex = (periodIndex + 1) % 10;
+    // Aktuellen Wert berechnen
+    float calculatedRpm = 60.0 * 1000000.0 / (pulsePeriod * RpmTriggerPerRound);
     
-    unsigned long normalizedPeriod = pulsePeriod;
-    // Direktberechnung ohne Cluster-Normalisierung
+    // Statische Ringpuffer für schnelle Stabilisierung
+    static float recentRPMs[5] = {0};
+    static int rpmIndex = 0;
     
-    // RPM direkt aus der Periode berechnen mit korrektem RpmTriggerPerRound-Wert
-    float calculatedRpm = 60.0 * 1000000.0 / (normalizedPeriod * RpmTriggerPerRound);
-    
-    // Plausibilitätsprüfung für 2000-3000 RPM Bereich
-    if (calculatedRpm >= 1500.0 && calculatedRpm <= 3500.0) {
-      // Gleitender Durchschnitt für stabilere Werte (70% alter Wert + 30% neuer Wert)
-      Rpm = (Rpm * 0.7) + (calculatedRpm * 0.3);
-    } else if (calculatedRpm >= 500.0 && calculatedRpm <= 5000.0) {
-      // Weniger Einfluss bei Werten außerhalb des Hauptbereichs
-      Rpm = (Rpm * 0.9) + (calculatedRpm * 0.1);
+    // Plausibilitätsprüfung: 500-5000 RPM mit zusätzlicher Logik für Start
+    if (calculatedRpm >= 500.0 && calculatedRpm <= 5000.0) {
+      // Ringpuffer befüllen
+      recentRPMs[rpmIndex] = calculatedRpm;
+      rpmIndex = (rpmIndex + 1) % 5;
+      
+      // Durchschnitt berechnen
+      float sum = 0;
+      int validValues = 0;
+      
+      for (int i = 0; i < 5; i++) {
+        if (recentRPMs[i] > 0) {
+          sum += recentRPMs[i];
+          validValues++;
+        }
+      }
+      
+      // SOFORTIGE ÜBERNAHME bei ersten Messungen oder großen Abweichungen
+      if (Rpm < 100.0 || abs(calculatedRpm - Rpm) > 1000.0) {
+        // Direkte Übernahme bei Start oder großer Änderung
+        Rpm = calculatedRpm;
+        
+        // Puffer mit aktuellen Werten füllen für schnellere Konvergenz
+        for (int i = 0; i < 5; i++) {
+          recentRPMs[i] = calculatedRpm;
+        }
+      } 
+      else if (validValues > 0) {
+        // Normaler Fall: Einfacher Durchschnitt
+        Rpm = sum / validValues;
+      }
+      
+      // Debug-Ausgabe
+      Serial.print("Periode: ");
+      Serial.print(pulsePeriod);
+      Serial.print(" µs, Berechnet: ");
+      Serial.print(calculatedRpm);
+      Serial.print(", Mittelwert: ");
+      Serial.println(Rpm);
     }
     
-    // Debug-Ausgabe
-    Serial.print("Periode: ");
-    Serial.print(pulsePeriod);
-    Serial.print(" µs, Berechnete RPM: ");
-    Serial.print(calculatedRpm);
-    Serial.print(", Gefilterte RPM: ");
-    Serial.println(Rpm);
-    
-    // Flag zurücksetzen und Display aktualisieren
     newPulseDetected = false;
     displayRPM();
+  
     
     // Logge die Daten auf die SD-Karte nur wenn sie verfügbar ist
     if (sdCardAvailable) {
