@@ -2496,10 +2496,13 @@ void loop() {
   static unsigned long lastCardCheck = 0;
   static unsigned long lastTimeUpdate = 0;
   static unsigned long lastDebugOutput = 0;
-
   static int lastPinState = -1;
+  // RPM automatisch zurücksetzen
+  static unsigned long lastPulseTime = 0;
+  static bool motorWasRunning = false;
   int currentPinState = digitalRead(HALL_SENSOR_PIN);
 
+  // Hall-Sensor Status-Änderungen überwachen
   if (currentPinState != lastPinState) {
     Serial.print("Hall-Sensor Pin-Status geändert: ");
     Serial.println(currentPinState ? "HIGH" : "LOW");
@@ -2512,6 +2515,7 @@ void loop() {
     }
   }
   
+  // Debug-Ausgabe einmal pro Sekunde
   if (currentTime - lastDebugOutput > 1000) {
     lastDebugOutput = currentTime;
     Serial.print("DEBUG: Pulses detected in last second: ");
@@ -2530,58 +2534,72 @@ void loop() {
   // Temperatur vom RTC-Modul auslesen
   float temperature = rtc.getTemperature();
   
-// SD-Karten-Status regelmäßig überprüfen (alle 3 Sekunden)
-if (currentTime - lastCardCheck >= 3000) {
-  bool previousState = sdCardAvailable;
-  sdCardAvailable = checkSDCard();
-  
-  // Status hat sich geändert - aktualisiere Display entsprechend
-  if (previousState != sdCardAvailable) {
-    if (sdCardAvailable) {
-      // NEUER CODE: Karte wurde während des Betriebs eingesteckt
-      Serial.println("SD-Karte während des Betriebs eingesteckt");
-      
-      // Neuen Dateinamen generieren
-      currentLogFileName = getNextFileName();
-      Serial.print("Neuer Log-Dateiname: ");
-      Serial.println(currentLogFileName);
-      
-      // Log-Header schreiben
-      File dataFile = SD.open(currentLogFileName, FILE_WRITE);
-      if (dataFile) {
-        dataFile.println("Date,UTC,RPM,Temperatur");
-        dataFile.close();
-        Serial.println("Neuer Log-Header geschrieben");
+  // SD-Karten-Status regelmäßig überprüfen (alle 3 Sekunden)
+  if (currentTime - lastCardCheck >= 3000) {
+    bool previousState = sdCardAvailable;
+    sdCardAvailable = checkSDCard();
+    
+    // Status hat sich geändert - aktualisiere Display entsprechend
+    if (previousState != sdCardAvailable) {
+      if (sdCardAvailable) {
+        Serial.println("SD-Karte während des Betriebs eingesteckt");
+        
+        // Neuen Dateinamen generieren
+        currentLogFileName = getNextFileName();
+        Serial.print("Neuer Log-Dateiname: ");
+        Serial.println(currentLogFileName);
+        
+        // Log-Header schreiben
+        File dataFile = SD.open(currentLogFileName, FILE_WRITE);
+        if (dataFile) {
+          dataFile.println("Date,UTC,RPM,Temperatur,\"Motorstatus\"");
+          dataFile.close();
+          Serial.println("Neuer Log-Header geschrieben");
+        }
+        
+        // Karte wurde eingesteckt - Zeit anzeigen
+        showTime();
+      } else {
+        // Karte wurde entfernt
+        displayNoCard();
       }
-      
-      // Karte wurde eingesteckt - Zeit anzeigen
-      showTime();
     } else {
-      // Karte wurde entfernt
-      displayNoCard();
+      // Stelle sicher, dass NO CARD angezeigt wird
+      if (!sdCardAvailable && currentTime - lastTimeUpdate >= 1000) {
+        displayNoCard(); // Regelmäßig NO CARD anzeigen, wenn keine Karte vorhanden
+      }
     }
-  } else {
-    // Stelle sicher, dass NO CARD angezeigt wird
-    if (!sdCardAvailable && currentTime - lastTimeUpdate >= 1000) {
-      displayNoCard(); // Regelmäßig NO CARD anzeigen, wenn keine Karte vorhanden
-    }
+    
+    lastCardCheck = currentTime;
   }
   
-  lastCardCheck = currentTime;
-}
-  
-    // RPM-Berechnung
-    // 
+  // RPM-Berechnung
   if (newPulseDetected) {
+    // Merken, dass Motor läuft und letzte Impulszeit aktualisieren
+    lastPulseTime = currentTime;
+    if (Rpm > 500) motorWasRunning = true;
+    
     // Aktuellen Wert berechnen
     float calculatedRpm = 60.0 * 1000000.0 / (pulsePeriod * RpmTriggerPerRound);
     
     // Statische Ringpuffer für schnelle Stabilisierung
     static float recentRPMs[5] = {0};
     static int rpmIndex = 0;
+    static float lastCalculatedRpm = 0;
     
     // Plausibilitätsprüfung: 500-5000 RPM mit zusätzlicher Logik für Start
     if (calculatedRpm >= 500.0 && calculatedRpm <= 5000.0) {
+      // Filter für unplausible Änderungen (z.B. plötzliche Verdoppelung)
+      if (lastCalculatedRpm > 1000 && calculatedRpm > lastCalculatedRpm * 1.5) {
+        Serial.print("Unplausible RPM-Änderung gefiltert: ");
+        Serial.print(calculatedRpm);
+        Serial.print(" -> behalte ");
+        Serial.println(lastCalculatedRpm);
+        calculatedRpm = lastCalculatedRpm;
+      }
+      
+      lastCalculatedRpm = calculatedRpm;
+      
       // Ringpuffer befüllen
       recentRPMs[rpmIndex] = calculatedRpm;
       rpmIndex = (rpmIndex + 1) % 5;
@@ -2623,37 +2641,44 @@ if (currentTime - lastCardCheck >= 3000) {
     
     newPulseDetected = false;
     displayRPM();
-  
+  }
     
-   // Nur alle 2 Sekunden auf SD-Karte schreiben
+  // Nur alle 2 Sekunden auf SD-Karte schreiben
   static unsigned long lastSDWrite = 0;
   if (sdCardAvailable && currentTime - lastSDWrite >= 2000) { // nur alle 2 Sekunden
-    lastSDWrite = currentTime;{
-      File dataFile = SD.open(currentLogFileName, FILE_APPEND);
-      if (dataFile) {
-        DateTime now = rtc.now();
-        
-        // Datums- und Zeitformat mit führenden Nullen: YYYY-MM-DD,HH:MM:SS
-        dataFile.print(now.year()); dataFile.print("-");
-        if (now.month() < 10) dataFile.print("0");
-        dataFile.print(now.month()); dataFile.print("-");
-        if (now.day() < 10) dataFile.print("0");
-        dataFile.print(now.day()); dataFile.print(",");
-        
-        if (now.hour() < 10) dataFile.print("0");
-        dataFile.print(now.hour()); dataFile.print(":");
-        if (now.minute() < 10) dataFile.print("0");
-        dataFile.print(now.minute()); dataFile.print(":");
-        if (now.second() < 10) dataFile.print("0");
-        dataFile.print(now.second()); dataFile.print(",");
-        
-        dataFile.print(Rpm); dataFile.print(",");
-        dataFile.println(temperature);
-        
-        dataFile.close();
+    lastSDWrite = currentTime;
+    
+    File dataFile = SD.open(currentLogFileName, FILE_APPEND);
+    if (dataFile) {
+      DateTime now = rtc.now();
+      
+      // Formatierter Zeitstempel
+      char dateStr[15], timeStr[15];
+      sprintf(dateStr, "%02d.%02d.%02d", now.day(), now.month(), now.year() % 100);
+      sprintf(timeStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+      
+      dataFile.print(dateStr);
+      dataFile.print(",");
+      dataFile.print(timeStr);
+      dataFile.print(",");
+      dataFile.print(Rpm);
+      dataFile.print(",");
+      dataFile.print(temperature);
+      dataFile.print(",");
+      
+      // Motorstatus prozentual anzeigen (optional)
+      if (Rpm > 0) {
+        float motorStatus = 100.0;
+        dataFile.print("\"");
+        dataFile.print(motorStatus, 2);
+        dataFile.println("%\"");
       } else {
-        sdCardAvailable = false; // Fehler beim Schreiben, Status aktualisieren
+        dataFile.println("\"Motor stopped\"");
       }
+      
+      dataFile.close();
+    } else {
+      sdCardAvailable = false; // Fehler beim Schreiben, Status aktualisieren
     }
     
     // Daten im Puffer für EEPROM-Schreibvorgang speichern
@@ -2674,34 +2699,36 @@ if (currentTime - lastCardCheck >= 3000) {
       }
     }
   }
-    // RPM automatisch zurücksetzen, wenn keine Impulse mehr kommen
-  static unsigned long lastPulseTime = 0;
-  if (newPulseDetected) {
-    lastPulseTime = currentTime;
-  } else if (currentTime - lastPulseTime > 2000 && Rpm > 0) {
+    
+  // RPM automatisch zurücksetzen, wenn keine Impulse mehr kommen
+  if (motorWasRunning && currentTime - lastPulseTime > 2000 && Rpm > 0) {
     // Nach 2 Sekunden ohne Impulse RPM auf 0 setzen
     Serial.println("Keine Impulse mehr erkannt - Motor wahrscheinlich gestoppt");
     Rpm = 0;
     displayRPM();
     
-    // Optional: Status auf SD-Karte und EEPROM loggen
+    // Explizit RPM=0 in die Datei schreiben
     if (sdCardAvailable) {
       File dataFile = SD.open(currentLogFileName, FILE_APPEND);
       if (dataFile) {
         DateTime now = rtc.now();
         
         // Formatierter Zeitstempel
-        char timeStr[30];
-        sprintf(timeStr, "%04d-%02d-%02d,%02d:%02d:%02d",
-            now.year(), now.month(), now.day(), 
-            now.hour(), now.minute(), now.second());
+        char dateStr[15], timeStr[15];
+        sprintf(dateStr, "%02d.%02d.%02d", now.day(), now.month(), now.year() % 100);
+        sprintf(timeStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
         
+        dataFile.print(dateStr);
+        dataFile.print(",");
         dataFile.print(timeStr);
         dataFile.print(",0,"); // RPM = 0
-        dataFile.println(temperature);
+        dataFile.print(temperature);
+        dataFile.println(",\"Motor stopped\"");
         dataFile.close();
       }
     }
+    
+    motorWasRunning = false; // Zurücksetzen des Flags
   }
   
   // Zeit auf dem Display aktualisieren (alle 1 Sekunde)
@@ -2740,5 +2767,4 @@ if (currentTime - lastCardCheck >= 3000) {
   
   // Serielle Befehle verarbeiten
   handleSerialCommands();
-}
 }
