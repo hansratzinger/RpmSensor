@@ -2625,8 +2625,10 @@ if (currentTime - lastCardCheck >= 3000) {
     displayRPM();
   
     
-    // Logge die Daten auf die SD-Karte nur wenn sie verfügbar ist
-    if (sdCardAvailable) {
+   // Nur alle 2 Sekunden auf SD-Karte schreiben
+  static unsigned long lastSDWrite = 0;
+  if (sdCardAvailable && currentTime - lastSDWrite >= 2000) { // nur alle 2 Sekunden
+    lastSDWrite = currentTime;{
       File dataFile = SD.open(currentLogFileName, FILE_APPEND);
       if (dataFile) {
         DateTime now = rtc.now();
@@ -2738,4 +2740,5 @@ if (currentTime - lastCardCheck >= 3000) {
   
   // Serielle Befehle verarbeiten
   handleSerialCommands();
+}
 }
