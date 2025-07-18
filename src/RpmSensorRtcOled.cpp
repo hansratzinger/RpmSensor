@@ -1284,18 +1284,6 @@ void downloadEEPROMDataToUSB() {
     // Only show valid records with timestamps (after year 2000)
     if (record.timestamp > 946684800) { // > 1.1.2000 to filter invalid
       
-      // Check if this is a duplicate by timestamp
-      bool isDuplicate = false;
-      for (uint16_t j = 0; j < TRACK_SIZE; j++) {
-        if (lastTimestamps[j] == record.timestamp) {
-          isDuplicate = true;
-          break;
-        }
-      }
-      
-      // Skip duplicates
-      if (isDuplicate) continue;
-      
       // Store timestamp in tracking array
       lastTimestamps[timestampIndex] = record.timestamp;
       timestampIndex = (timestampIndex + 1) % TRACK_SIZE;
@@ -2408,7 +2396,7 @@ void loop() {
 
   // Sicherstellen, dass EEPROM immer verfügbar ist
   eepromAvailable = true; 
-  Serial.println("EEPROM-Status manuell korrigiert");
+  // Serial.println("EEPROM-Status manuell korrigiert");
 
   // Temperatur vom RTC-Modul auslesen
   float temperature = rtc.getTemperature();
