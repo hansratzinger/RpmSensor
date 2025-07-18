@@ -1004,6 +1004,8 @@ delay(100);
   return true;
 }
 
+
+
 bool testEEPROM() {
   Serial.println("EEPROM-Debug-Test startet...");
   
@@ -1480,6 +1482,7 @@ LogRecord readRecordFromEEPROM(uint32_t recordIndex) {
   
   return record;
 }
+
 void handleSerialCommands() {
   if (Serial.available()) {
     String command = Serial.readStringUntil('\n');
@@ -1489,32 +1492,50 @@ void handleSerialCommands() {
       downloadEEPROMDataToUSB();
     } else if (command.equals("clear") || command.equals("erase")) {
       eraseEEPROM();
-      Serial.println("EEPROM gelöscht (Header zurückgesetzt)");
-    } else if (command.equals("status")) {
-      // Zusätzlicher hilfreicher Befehl
-      Serial.print("EEPROM-Status: ");
-      Serial.println(eepromAvailable ? "Verfügbar" : "Nicht verfügbar");
-      Serial.print("Gespeicherte Datensätze: ");
+    } else if (command.equals("status") || command.equals("info")) {
+      // Detaillierte Statusinformationen
+      Serial.println("\n--- EEPROM-STATUS ---");
+      Serial.print("Status: ");
+      Serial.println(eepromAvailable ? "VERFÜGBAR" : "NICHT VERFÜGBAR");
+      Serial.print("Anzahl gespeicherter Datensätze: ");
       Serial.println(eepromHeader.recordCount);
+      Serial.print("Nächste Schreibadresse: 0x");
+      Serial.println(eepromHeader.nextWriteAddress, HEX);
+      Serial.print("EEPROM-Header initialisiert: ");
+      Serial.println(eepromHeader.initialized == 0xAA ? "JA" : "NEIN");
+      Serial.print("Aktueller Pufferstand: ");
+      Serial.println(bufferCount);
+      Serial.println("--------------------\n");
     } else {
-      Serial.println("Unbekannter Befehl. Verfügbar: download, erase, clear, status");
+      Serial.println("Unbekannter Befehl. Verfügbar: download, erase, clear, status, info");
     }
   }
 }
+
 // EEPROM komplett löschen
 void eraseEEPROM() {
-  // Nur Header zurücksetzen
+  Serial.println("EEPROM wird gelöscht...");
+  
+  // Header zurücksetzen
   eepromHeader.recordCount = 0;
   eepromHeader.nextWriteAddress = sizeof(EEPROMHeader);
   eepromHeader.initialized = 0xAA;
-  writeEEPROMHeader();
   
-  // WICHTIG: Puffer ebenfalls leeren!
+  // Header physisch ins EEPROM schreiben
+  for (uint16_t i = 0; i < sizeof(EEPROMHeader); i++) {
+    writeEEPROMByte(i, ((uint8_t*)&eepromHeader)[i]);
+    delay(5); // Warten zwischen Bytes
+  }
+  
+  // Puffer leeren
   bufferCount = 0;
   bufferIndex = 0;
   memset(dataBuffer, 0, sizeof(dataBuffer));
   
-  Serial.println("EEPROM gelöscht (Header und Puffer zurückgesetzt)");
+  // Bestätigen Sie, dass der EEPROM jetzt leer ist
+  Serial.println("EEPROM erfolgreich gelöscht.");
+  Serial.print("Neue Zählerstand: ");
+  Serial.println(eepromHeader.recordCount);
 }
 
 // Nach der SD-Karten-Initialisierung
@@ -2557,47 +2578,13 @@ void loop() {
     } else {
       sdCardAvailable = false; // Fehler beim Schreiben, Status aktualisieren
     }
-    
-    // Daten im Puffer für EEPROM-Schreibvorgang speichern
-    if (eepromAvailable && bufferCount < BUFFER_SIZE) {
-      LogRecord newRecord;
-      DateTime now = rtc.now();
-      newRecord.timestamp = now.unixtime();
-      newRecord.rpm = Rpm;
-      newRecord.temperature = temperature;
-      
-      dataBuffer[bufferIndex] = newRecord;
-      bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
-      bufferCount++;
-      
-      // Wenn der Puffer voll ist oder genügend Zeit vergangen ist, auf EEPROM schreiben
-      if (bufferCount >= BUFFER_SIZE || currentTime - lastEEPROMWrite >= EEPROM_WRITE_INTERVAL) {
-        writeBufferedDataToEEPROM();
-      }
-    }
+     
   }
      
-  // UNABHÄNGIGE EEPROM-Operationen - außerhalb des SD-Karten-Blocks!
+   // UNABHÄNGIGE EEPROM-Operationen - außerhalb des SD-Karten-Blocks!
   static unsigned long lastEEPROMBufferCheck = 0;
   if (eepromAvailable && currentTime - lastEEPROMBufferCheck >= 2000) { // Alle 2 Sekunden prüfen
     lastEEPROMBufferCheck = currentTime;
-    
-    // Daten im Puffer für EEPROM speichern
-    if (bufferCount < BUFFER_SIZE) {
-      LogRecord newRecord;
-      DateTime now = rtc.now();
-      newRecord.timestamp = now.unixtime();
-      newRecord.rpm = Rpm;
-      newRecord.temperature = temperature;
-      
-      dataBuffer[bufferIndex] = newRecord;
-      bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
-      bufferCount++;
-      
-      Serial.print("EEPROM-Puffer: ");
-      Serial.print(bufferCount);
-      Serial.println(" Datensätze");
-    }
     
     // Wenn der Puffer voll ist oder genügend Zeit vergangen ist, auf EEPROM schreiben
     if (bufferCount > 0 && (bufferCount >= BUFFER_SIZE || currentTime - lastEEPROMWrite >= EEPROM_WRITE_INTERVAL)) {
