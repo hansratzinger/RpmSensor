@@ -13,6 +13,8 @@
 // Release 2.2 double OLED displays, impoved RPM, results checked with oszilloscope
 // RELEASE 2.2 HR 2025-04-24 NK
 // -------------------------------------------------
+// Release 2.3: EEPROM added, data logging to EEPROM, SD card and display
+// RELEASE 2.3 HR 2025-07-18 NK
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
