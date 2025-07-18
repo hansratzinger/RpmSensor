@@ -1077,6 +1077,20 @@ bool verifyEEPROM() {
   return (readValue == 0x55);
 }
 
+// Diese Funktion prüft, ob das EEPROM tatsächlich antwortet
+bool isEEPROMAvailable() {
+  Wire1.beginTransmission(EEPROM_ADDRESS);
+  byte error = Wire1.endTransmission();
+  
+  if (error != 0) {
+    Serial.print("EEPROM nicht erreichbar (Fehlercode: ");
+    Serial.print(error);
+    Serial.println(")");
+    return false;
+  }
+  return true;
+}
+ 
 void readEEPROMHeader() {
   // Zuerst mit Nullen initialisieren
   memset(&eepromHeader, 0, sizeof(EEPROMHeader));
@@ -1513,13 +1527,22 @@ void handleSerialCommands() {
 }
 
 // EEPROM komplett löschen
+// filepath: c:\esp32\RNLI\RpmSensor\src\RpmSensorRtcOled.cpp
 void eraseEEPROM() {
   Serial.println("EEPROM wird gelöscht...");
+  
+  // Make sure Wire1 is properly initialized
+  Wire1.end();
+  delay(100);
+  Wire1.begin(SDA_PIN_EEPROM, SCL_PIN_EEPROM);
+  Wire1.setClock(50000); // Slower speed for reliability
+  delay(100);
   
   // Header zurücksetzen
   eepromHeader.recordCount = 0;
   eepromHeader.nextWriteAddress = sizeof(EEPROMHeader);
   eepromHeader.initialized = 0xAA;
+  
   
   // Header physisch ins EEPROM schreiben
   for (uint16_t i = 0; i < sizeof(EEPROMHeader); i++) {
@@ -2354,13 +2377,17 @@ void setup() {
 
 bool writeBufferedDataToEEPROM() {
   if (!eepromAvailable || bufferCount == 0) {
-    Serial.println("EEPROM nicht verfügbar oder Puffer leer");
     return false;
   }
+  
+  // EEPROM-Verbindung prüfen...
   
   Serial.print("EEPROM schreiben: ");
   Serial.print(bufferCount);
   Serial.println(" Datensätze");
+  
+  // Ermittle den Startindex für die neuesten Einträge im Ring-Puffer
+  int startIndex = (bufferIndex - bufferCount + BUFFER_SIZE) % BUFFER_SIZE;
   
   for (uint8_t i = 0; i < bufferCount; i++) {
     uint32_t address = eepromHeader.nextWriteAddress;
@@ -2371,8 +2398,9 @@ bool writeBufferedDataToEEPROM() {
       return false;
     }
     
-    // Datensatz schreiben
-    writeEEPROMPage(address, (uint8_t*)&dataBuffer[i], sizeof(LogRecord));
+    // Datensatz aus dem Ring-Puffer in richtiger Reihenfolge schreiben
+    int currentIndex = (startIndex + i) % BUFFER_SIZE;
+    writeEEPROMPage(address, (uint8_t*)&dataBuffer[currentIndex], sizeof(LogRecord));
     delay(EEPROM_WRITE_CYCLE);
     
     // Header-Zähler aktualisieren
@@ -2383,10 +2411,9 @@ bool writeBufferedDataToEEPROM() {
   // Header am Ende nur einmal schreiben
   writeEEPROMHeader();
   
-  // Rückmeldung geben
-  Serial.print("EEPROM-Status nach Schreiben: ");
-  Serial.print(eepromHeader.recordCount);
-  Serial.println(" Datensätze gespeichert");
+  // Puffer vollständig zurücksetzen
+  bufferCount = 0;
+  bufferIndex = 0;
   
   return true;
 }
@@ -2401,6 +2428,7 @@ void loop() {
   static int lastPinState = -1;
   // RPM automatisch zurücksetzen
   static unsigned long lastPulseTime = 0;
+  static unsigned long lastEEPROMDataRecording = 0; // Neuer Timer für RPM-Aufzeichnung
   static bool motorWasRunning = false;
   int currentPinState = digitalRead(HALL_SENSOR_PIN);
 
@@ -2426,8 +2454,7 @@ void loop() {
   }
 
   // Sicherstellen, dass EEPROM immer verfügbar ist
-  eepromAvailable = true; 
-  // Serial.println("EEPROM-Status manuell korrigiert");
+  eepromAvailable = true;
 
   // Temperatur vom RTC-Modul auslesen
   float temperature = rtc.getTemperature();
@@ -2578,12 +2605,32 @@ void loop() {
     } else {
       sdCardAvailable = false; // Fehler beim Schreiben, Status aktualisieren
     }
-     
   }
      
-   // UNABHÄNGIGE EEPROM-Operationen - außerhalb des SD-Karten-Blocks!
+  // EEPROM-Datenaufzeichnung für laufenden Motor - HINZUGEFÜGT
+  if (eepromAvailable && currentTime - lastEEPROMDataRecording >= 5000 && Rpm > 0) { // Alle 5 Sekunden während Motor läuft
+    lastEEPROMDataRecording = currentTime;
+    
+    // RPM-Werte im EEPROM-Puffer speichern
+    if (bufferCount < BUFFER_SIZE) {
+      LogRecord newRecord;
+      DateTime now = rtc.now();
+      newRecord.timestamp = now.unixtime();
+      newRecord.rpm = Rpm;
+      newRecord.temperature = temperature * 100; // Multipliziert mit 100 für 2 Nachkommastellen
+      
+      dataBuffer[bufferIndex] = newRecord;
+      bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
+      bufferCount++;
+      
+      Serial.print("RPM-Wert im EEPROM-Puffer gespeichert: ");
+      Serial.println(Rpm);
+    }
+  }
+     
+  // EEPROM-Puffer regelmäßig schreiben
   static unsigned long lastEEPROMBufferCheck = 0;
-  if (eepromAvailable && currentTime - lastEEPROMBufferCheck >= 2000) { // Alle 2 Sekunden prüfen
+  if (eepromAvailable && currentTime - lastEEPROMBufferCheck >= 10000) { // Alle 10 Sekunden prüfen
     lastEEPROMBufferCheck = currentTime;
     
     // Wenn der Puffer voll ist oder genügend Zeit vergangen ist, auf EEPROM schreiben
@@ -2603,59 +2650,60 @@ void loop() {
       }
     }
   }
-        // RPM automatisch zurücksetzen, wenn keine Impulse mehr kommen
-    if (motorWasRunning && currentTime - lastPulseTime > 2000 && Rpm > 0) {
-      // Nach 2 Sekunden ohne Impulse RPM auf 0 setzen
-      Serial.println("Keine Impulse mehr erkannt - Motor wahrscheinlich gestoppt");
-      Rpm = 0;
-      displayRPM();
-      
-      // Explizit RPM=0 in die Datei schreiben
-      if (sdCardAvailable) {
-        File dataFile = SD.open(currentLogFileName, FILE_APPEND);
-        if (dataFile) {
-          DateTime now = rtc.now();
-          
-          // Formatierter Zeitstempel
-          char dateStr[15], timeStr[15];
-          sprintf(dateStr, "%02d.%02d.%02d", now.day(), now.month(), now.year() % 100);
-          sprintf(timeStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
-          
-          dataFile.print(dateStr);
-          dataFile.print(",");
-          dataFile.print(timeStr);
-          dataFile.print(",0,"); // RPM = 0
-          dataFile.print(temperature);
-          dataFile.println(",\"Motor stopped\"");
-          dataFile.close();
-        }
-      }
-      
-      // ZUSÄTZLICH: RPM=0 auch im EEPROM-Puffer speichern
-      if (eepromAvailable && bufferCount < BUFFER_SIZE) {
-        LogRecord stopRecord;
+        
+  // RPM automatisch zurücksetzen, wenn keine Impulse mehr kommen
+  if (motorWasRunning && currentTime - lastPulseTime > 2000 && Rpm > 0) {
+    // Nach 2 Sekunden ohne Impulse RPM auf 0 setzen
+    Serial.println("Keine Impulse mehr erkannt - Motor wahrscheinlich gestoppt");
+    Rpm = 0;
+    displayRPM();
+    
+    // Explizit RPM=0 in die Datei schreiben
+    if (sdCardAvailable) {
+      File dataFile = SD.open(currentLogFileName, FILE_APPEND);
+      if (dataFile) {
         DateTime now = rtc.now();
-        stopRecord.timestamp = now.unixtime();
-        stopRecord.rpm = 0;
-        stopRecord.temperature = temperature;
         
-        dataBuffer[bufferIndex] = stopRecord;
-        bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
-        bufferCount++;
+        // Formatierter Zeitstempel
+        char dateStr[15], timeStr[15];
+        sprintf(dateStr, "%02d.%02d.%02d", now.day(), now.month(), now.year() % 100);
+        sprintf(timeStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
         
-        Serial.println("Motor-Stopp im EEPROM-Puffer vermerkt");
-        
-        // Sofort schreiben, wenn Motor stoppt
-        if (writeBufferedDataToEEPROM()) {
-          Serial.print("Motor-Stopp auf EEPROM geschrieben. Gesamt: ");
-          Serial.println(eepromHeader.recordCount);
-          bufferCount = 0;
-          lastEEPROMWrite = currentTime;
-        }
+        dataFile.print(dateStr);
+        dataFile.print(",");
+        dataFile.print(timeStr);
+        dataFile.print(",0,"); // RPM = 0
+        dataFile.print(temperature);
+        dataFile.println(",\"Motor stopped\"");
+        dataFile.close();
       }
-      
-      motorWasRunning = false; // Zurücksetzen des Flags
     }
+    
+    // ZUSÄTZLICH: RPM=0 auch im EEPROM-Puffer speichern
+    if (eepromAvailable && bufferCount < BUFFER_SIZE) {
+      LogRecord stopRecord;
+      DateTime now = rtc.now();
+      stopRecord.timestamp = now.unixtime();
+      stopRecord.rpm = 0;
+      stopRecord.temperature = temperature * 100; // Multipliziert mit 100 für 2 Nachkommastellen
+      
+      dataBuffer[bufferIndex] = stopRecord;
+      bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
+      bufferCount++;
+      
+      Serial.println("Motor-Stopp im EEPROM-Puffer vermerkt");
+      
+      // Sofort schreiben, wenn Motor stoppt
+      if (writeBufferedDataToEEPROM()) {
+        Serial.print("Motor-Stopp auf EEPROM geschrieben. Gesamt: ");
+        Serial.println(eepromHeader.recordCount);
+        bufferCount = 0;
+        lastEEPROMWrite = currentTime;
+      }
+    }
+    
+    motorWasRunning = false; // Zurücksetzen des Flags
+  }
   
   // Zeit auf dem Display aktualisieren (alle 1 Sekunde)
   if (currentTime - lastTimeUpdate >= 1000) {

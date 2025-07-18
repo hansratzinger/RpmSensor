@@ -1,0 +1,38 @@
+Vergleich der Aufzeichnungen: RPM-Log und Debug-Ausgaben
+Übereinstimmungen und Zeitliche Synchronisation
+Die CSV-Logdatei und die Debug-Ausgaben zeigen denselben Messzeitraum (16:17:30 bis etwa 16:21:20) und dokumentieren den gleichen Motorbetrieb:
+
+Motorstart (16:17:50): Beide zeigen, dass der Motor um 16:17:50 anläuft
+Motordrehzahl: Die berechneten RPM-Werte in den Debug-Ausgaben stimmen mit den Einträgen in der CSV überein
+Motorstopp (16:19:54): Beide zeigen, dass der Motor zu diesem Zeitpunkt stoppt
+Detaillierte Analyse der RPM-Werte
+Konstante Drehzahlphase (16:17:50 - 16:19:09)
+CSV: Relativ konstante Werte zwischen 2700-3000 RPM
+Debug: "Periode" zwischen 5000-6300 µs, "Berechnet" bei ca. 2400-3000 RPM
+Die Mittelwerte in der Debug-Ausgabe stimmen mit den CSV-Werten überein
+Abfallende Drehzahlphase (16:19:09 - 16:19:53)
+CSV: Deutlicher Abfall von 2515 → 1901 → 1387 RPM ab 16:19:09
+Debug: Zeigt ab 16:19:34-16:19:36 längere Perioden (7000+ µs), was dem RPM-Abfall entspricht
+Ab 16:19:43 sieht man "Unplausible RPM-Änderung gefiltert" Einträge, was auf eine Plausibilitätsprüfung hinweist
+Motorstopp (16:19:54)
+CSV: Ab 16:19:54 steht "Motor stopped"
+Debug: Meldet um 16:19:54 "Keine Impulse mehr erkannt - Motor wahrscheinlich gestoppt"
+Besondere Beobachtungen
+Hall-Sensor Messungen: Die Debug-Ausgabe zeigt die Hall-Sensor Statusänderungen (HIGH/LOW), die für die RPM-Berechnung verwendet werden.
+
+Filterung: Das System filtert unplausible Drehzahländerungen, was die Stabilität der Messung verbessert:
+
+
+Unplausible RPM-Änderung gefiltert: 4990.02 -> behalte 1876.17
+EEPROM-Speicherung: Die Debug-Ausgabe zeigt, dass die RPM-Werte in regelmäßigen Abständen im EEPROM gespeichert werden:
+
+
+RPM-Wert im EEPROM-Puffer gespeichert: 2840
+Manuelle Impulse: Das System erkennt "manuelle Impulse", was auf eine zusätzliche Triggerung oder Prüfung hinweist.
+
+Perioden-Umrechnung: Die Debug-Ausgabe zeigt, wie die Mikrosekunden-Perioden in RPM umgerechnet werden.
+
+EEPROM-Download
+Am Ende der Debug-Ausgabe (16:21:11) zeigt ein EEPROM-Download exakt die 26 Datensätze, die auch im CSV-Log erscheinen - dies bestätigt die Übereinstimmung beider Datenquellen.
+
+Die Messwerte in beiden Aufzeichnungen sind konsistent, wobei die Debug-Ausgabe deutlich mehr Details zur Signalverarbeitung und internen Berechnung liefert.
