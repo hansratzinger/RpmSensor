@@ -1480,7 +1480,6 @@ LogRecord readRecordFromEEPROM(uint32_t recordIndex) {
   
   return record;
 }
-
 void handleSerialCommands() {
   if (Serial.available()) {
     String command = Serial.readStringUntil('\n');
@@ -1488,14 +1487,20 @@ void handleSerialCommands() {
     
     if (command.equals("download")) {
       downloadEEPROMDataToUSB();
-    } else if (command.equals("clear")) {
-      // Bestehende Logik für "clear"...
+    } else if (command.equals("clear") || command.equals("erase")) {
+      eraseEEPROM();
+      Serial.println("EEPROM gelöscht (Header zurückgesetzt)");
+    } else if (command.equals("status")) {
+      // Zusätzlicher hilfreicher Befehl
+      Serial.print("EEPROM-Status: ");
+      Serial.println(eepromAvailable ? "Verfügbar" : "Nicht verfügbar");
+      Serial.print("Gespeicherte Datensätze: ");
+      Serial.println(eepromHeader.recordCount);
     } else {
-      Serial.println("Unbekannter Befehl.");
+      Serial.println("Unbekannter Befehl. Verfügbar: download, erase, clear, status");
     }
   }
 }
-
 // EEPROM komplett löschen
 void eraseEEPROM() {
   // Nur Header zurücksetzen
