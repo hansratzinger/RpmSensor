@@ -1509,7 +1509,12 @@ void eraseEEPROM() {
   eepromHeader.initialized = 0xAA;
   writeEEPROMHeader();
   
-  Serial.println("EEPROM gelöscht (Header zurückgesetzt)");
+  // WICHTIG: Puffer ebenfalls leeren!
+  bufferCount = 0;
+  bufferIndex = 0;
+  memset(dataBuffer, 0, sizeof(dataBuffer));
+  
+  Serial.println("EEPROM gelöscht (Header und Puffer zurückgesetzt)");
 }
 
 // Nach der SD-Karten-Initialisierung
