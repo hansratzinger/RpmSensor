@@ -55,7 +55,7 @@ Component	GPIO Pin	Description
 Hall Sensor	GPIO15	RPM detection input (with pull-up) orange/yellow cable
 
 SD Card SPI CS	GPIO5	SD card chip select blue cable
-SD Card SPI MOSI	GPIO23 yeollow cable
+SD Card SPI MOSI	GPIO23 yellow cable
 SD Card SPI MISO	GPIO19	white cable
 SD Card SPI CLK      GPIO18 green cable
 Button SET	GPIO27	Yellow cable for settings
@@ -71,53 +71,81 @@ I2C EEPROM Bus SCL	GPIO17	Clock line for EEPROM yellow cable
 
 Circuit Diagram
 ---------------
-
-
-
                                                 ┌──────────┐
                                                 │          │
-                                      3.3V ──┬──┤ DS3231   │
-                                             │  │ RTC      │
-                              4.7kΩ    4.7kΩ │  │          │
-                               ┌─┴─┐    ┌─┴─┐│  │          │
-ESP32                          │   │    │   ││  │          │
-┌───────────────┐     3.3V ────┴───┴────┴───┴┤  │          │
-│               │──────────────────────────┐ │  └──┬───┬───┘
-│           SDA │── GPIO21 ────────────────┴─┤     │   │
-│           SCL │── GPIO22 ────────────────┬─┤     │   │
-│               │                          │ │     │   │
-│               │                  ┌───────┴─┤  ┌──┴───┴──┐
-│               │                  │  OLED 1  │  │  OLED 2 │
-│               │                  │ 0x3C     │  │  0x3D   │
-│               │                  └──────────┘  └─────────┘
+                                      3.3V ─────┤ DS3231   │
+                                       │        │ RTC      │
+                               4.7kΩ   │ 4.7kΩ  │          │
+                               │       │ │      │          │
+ESP32                          │       │ │      │          │
+┌───────────────┐     3.3V ────┘       │ │      │          │
+│               │                      │ │      └──┬───┬───┘
+│           SDA │── GPIO21 ────────────┴─┘         │   │
+│           SCL │── GPIO22 ─────────────────────┬──┘   │
+│               │                               │      │
+│               │                       ┌───────┴──┐ ┌─┴─────┐
+│               │                       │  OLED 1  │ │ OLED 2 │
+│               │                       │  0x3C    │ │ 0x3D   │
+│               │                       └──────────┘ └────────┘
 │               │
-│        GPIO15 │───┬─── Hall Sensor Input
-│               │   └─── 10kΩ Pull-up to 3.3V
-│               │         100nF Capacitor to GND
+│               │              3.3V
+│               │               │
+│               │              10kΩ     100nF
+│        GPIO15 │───────────────┴─────┬─┴─┐    Hall Sensor (orange)
+│               │                     │   ├──────────────────
+│               │                     └───┘
+│               │                      │
+│               │                     GND
 │               │
-│        GPIO27 │───┬─── SET Button ──── GND
-│               │   └─── 10kΩ Pull-up to 3.3V
+│               │              3.3V
+│               │               │
+│               │              10kΩ     100nF         SET Button
+│        GPIO27 │───────────────┴─────┬─┴─┬──────┬─────┐
+│               │                     │   │      │     │
+│               │                     └───┘      └─────┘
+│               │                      │           │
+│               │                     GND         GND
 │               │
-│        GPIO25 │───┬─── PLUS Button ─── GND
-│               │   └─── 10kΩ Pull-up to 3.3V
+│               │              3.3V
+│               │               │
+│               │              10kΩ     100nF        PLUS Button
+│        GPIO25 │───────────────┴─────┬─┴─┬──────┬─────┐
+│               │                     │   │      │     │
+│               │                     └───┘      └─────┘
+│               │                      │           │
+│               │                     GND         GND
 │               │
-│        GPIO26 │───┬─── MINUS Button ── GND
-│               │   └─── 10kΩ Pull-up to 3.3V
+│               │              3.3V
+│               │               │
+│               │              10kΩ     100nF       MINUS Button
+│        GPIO26 │───────────────┴─────┬─┴─┬──────┬─────┐
+│               │                     │   │      │     │
+│               │                     └───┘      └─────┘
+│               │                      │           │
+│               │                     GND         GND
 │               │
-│        GPIO5  │─────── SD Card CS
-│               │─────── SD Card MOSI
-│               │─────── SD Card MISO
-│               │─────── SD Card SCK
+│         GPIO5 │──────────────────────────────── SD Card CS (blue)
+│        GPIO23 │──────────────────────────────── SD Card MOSI (yellow)
+│        GPIO19 │──────────────────────────────── SD Card MISO (white)
+│        GPIO18 │──────────────────────────────── SD Card SCK (green)
 │               │
-│        GPIO16 │───┬─── EEPROM SDA
-│               │   └─── 4.7kΩ Pull-up to 3.3V
+│               │              3.3V
+│               │               │
+│               │              4.7kΩ
+│        GPIO16 │───────────────┴────────────────── EEPROM SDA (blue)
 │               │
-│        GPIO17 │───┬─── EEPROM SCL
-│               │   └─── 4.7kΩ Pull-up to 3.3V
+│               │              3.3V
+│               │               │
+│               │              4.7kΩ
+│        GPIO17 │───────────────┴────────────────── EEPROM SCL (yellow)
 │               │
-│        GPIO12 │───┬─── Status LED
-│               │   └─── 220Ω Resistor to GND
-└───────────────┘
+│               │                     220Ω
+│        GPIO12 │────────────────────┬─\/\/\/─┬─────── Status LED
+│               │                    │        │
+│               │                    │       GND
+└───────────────┘                    │
+                                     │
+                                    GND
 
 Signal Conditioning
 --------------------
